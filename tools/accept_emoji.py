@@ -23,8 +23,9 @@ def main():
     original=ssh('cat /etc/default/neuronte-display')
     scalars=[int(row['scalar'][2:],16) for row in json.loads(args.manifest.read_text())['glyphs']]
     assert len(scalars)<=300,'acceptance fixture supports at most 300 scalars'
-    source="import sys\nsys.stdout.write('\\x1b[2J\\x1b[H\\x1b[?25lCOLOUR_EMOJI_ACCEPT\\r\\n')\n"
-    # VS16 requests wide presentation for otherwise textual single scalars.
+    source="import sys\nsys.stdout.write('\\x1b[?2027h\\x1b[2J\\x1b[H\\x1b[?25lCOLOUR_EMOJI_ACCEPT\\r\\n')\n"
+    # The application opts into grapheme width mode, then VS16 requests wide
+    # presentation. Bare text-presentation scalars remain narrow by default.
     source+='values='+repr(scalars)+'\n'
     source+="for start in range(0,len(values),20):\n sys.stdout.write(''.join(chr(cp)+'\\ufe0f ' for cp in values[start:start+20])+'\\r\\n')\n"
     source+="sys.stdout.write('END_EMOJI\\r\\n');sys.stdout.flush()\n"

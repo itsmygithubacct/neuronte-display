@@ -39,6 +39,23 @@ VIDEO=Path(os.environ.get('NEURONTE_VIDEO_HOME',HOME))
 
 
 class InputTests(unittest.TestCase):
+    def test_emoji_presentation_width_requires_application_mode(self):
+        emoji=Emoji.__new__(Emoji);emoji.scalars={0x2764}
+        for mode,sequence,wide in ((False,'\u2764\ufe0f',False),
+                                   (True,'\u2764',False),
+                                   (True,'\u2764\ufe0e',False),
+                                   (True,'\u2764\ufe0f',True)):
+            with self.subTest(mode=mode,sequence=sequence):
+                terminal=d.Terminal(20,4)
+                try:
+                    if mode: terminal.feed(b'\x1b[?2027h')
+                    terminal.feed(sequence.encode())
+                    cells,_=terminal.snapshot()
+                    self.assertEqual(bool(cells[0][3]&512),wide)
+                    self.assertEqual(bool(cells[1][3]&1024),wide)
+                    self.assertEqual(emoji.selected(cells[0]),0x2764 if wide else None)
+                finally: terminal.close()
+
     def test_real_outer_pty_resize_updates_child_geometry(self):
         library=HOME/'build/libneuronte.so'
         with tempfile.TemporaryDirectory() as directory:

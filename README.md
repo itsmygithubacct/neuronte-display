@@ -103,8 +103,11 @@ python3 neuronte_display.py --emoji-weights weights/emoji.nrt \
 
 The manifest must specify version 1, `cell_columns: 2`, and `glyphs` with
 `scalar` strings such as `U+1F600`. Only listed single scalars in parser-reserved
-wide cells select the colour bundle. VS16 can request emoji width; VS15 keeps
-text presentation. ZWJ, skin-tone and flag sequences use the documented complex
+wide cells select the colour bundle. Applications enable grapheme width mode
+with `CSI ? 2027 h` before using VS16 to request emoji width; the pinned parser
+keeps its compatibility default with mode 2027 disabled. Bare text-presentation
+scalars stay narrow, and VS15 keeps text presentation. ZWJ, skin-tone and flag
+sequences use the documented complex
 cluster fallback. Each half calls `neuronte_draw_half` independently; layered
 colours and both theme palettes are retained. `--theme` accepts `auto`, `dark`
 and `light`; auto uses cell-background luminance. The bounded cache includes
