@@ -23,10 +23,12 @@ class Emoji:
         self.lib.neuronte_close.argtypes=[C.c_void_p]
         self.lib.neuronte_set_theme.argtypes=self.lib.neuronte_set_samples.argtypes=[C.c_void_p,C.c_int]
         self.lib.neuronte_draw_half.argtypes=[C.c_void_p,C.c_void_p]+[C.c_int]*7+[C.c_uint32,C.c_int,C.c_uint32]
+        self.lib.neuronte_coverage_half.argtypes=[C.c_void_p,C.c_uint32]+[C.c_int]*4+[C.POINTER(C.c_float)]
         if self.lib.neuronte_open_file(str(weights).encode(),C.byref(self.ptr)):
             raise ValueError('cannot load selected emoji weights')
         self.lib.neuronte_set_samples(self.ptr,2)
         self.cache=collections.OrderedDict()
+        self.masks=collections.OrderedDict()
 
     def selected(self,record):
         value,_,_,flags=record
@@ -57,6 +59,20 @@ class Emoji:
         frame.setflags(write=False); self.cache[key]=frame
         while len(self.cache)>512: self.cache.popitem(last=False)
         return frame
+
+    def mask(self,scalar,half,flags):
+        if flags&64: return np.zeros((self.ch,self.cw),np.uint8)
+        key=scalar,half
+        if key not in self.masks:
+            values=np.empty((self.ch,self.cw),np.float32)
+            if self.lib.neuronte_coverage_half(self.ptr,scalar,half,self.cw,self.ch,2,
+                                               values.ctypes.data_as(C.POINTER(C.c_float))):
+                raise RuntimeError('cannot infer emoji composite alpha')
+            result=np.floor(np.clip(values,0,1)*255+.5).astype(np.uint8)
+            result.setflags(write=False);self.masks[key]=result
+            while len(self.masks)>512:self.masks.popitem(last=False)
+        self.masks.move_to_end(key)
+        return self.masks[key]
 
     def close(self):
         if self.ptr: self.lib.neuronte_close(self.ptr); self.ptr=None

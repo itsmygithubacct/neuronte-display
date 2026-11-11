@@ -105,6 +105,40 @@ class EvdevPointer:
             self.devices[fd] = axes
             self.pending_buttons[fd] = []
 
+    def leave(self):
+        # Cancel a logical drag on the owning VT before releasing it. Events
+        # subsequently read from another VT are discarded, never forwarded.
+        if self.button:
+            self.workspace.mouse(self.x,self.y,1,self.button)
+        self.button=0
+        self.pending_motion.clear()
+        for pending in self.pending_buttons.values(): pending.clear()
+
+    def resume(self):
+        self.button=0
+        self.pending_motion.clear()
+        for fd,axes in list(self.devices.items()):
+            self.pending_buttons[fd].clear()
+            while True:
+                try: data=os.read(fd,self.event.size*64)
+                except BlockingIOError: break
+                if not data:
+                    os.close(fd);del self.devices[fd];del self.pending_buttons[fd]
+                    break
+            if fd not in self.devices: continue
+            # A tablet may have moved on the other VT without sending another
+            # ABS event after return. Query its current position after draining.
+            for axis in axes:
+                try: current,lo,hi,_,_,_=struct.unpack('6i',fcntl.ioctl(fd,0x80184540+axis,b'\0'*24))
+                except OSError: continue
+                axes[axis]=(lo,hi)
+                size=self.workspace.cols*self.workspace.cw if axis==0 else self.workspace.rows*self.workspace.ch
+                position=max(0,min(size-1,(current-lo)*(size-1)//max(1,hi-lo)))
+                if axis==0:self.x=position
+                else:self.y=position
+        if getattr(self.workspace,'pointer',None) is not None:
+            self.workspace.pointer=self.x,self.y
+
     def read(self, fd, active=True):
         try:
             raw = os.read(fd,self.event.size*64)
@@ -120,6 +154,7 @@ class EvdevPointer:
         for offset in range(0,len(raw),self.event.size):
             _,_,kind,code,value = self.event.unpack_from(raw,offset)
             if not active:
+                self.button=0
                 self.pending_buttons[fd].clear()
                 self.pending_motion.discard(fd)
                 continue

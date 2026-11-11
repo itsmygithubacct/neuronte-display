@@ -282,11 +282,16 @@ class Renderer:
     def ink(self, records, cols, rows):
         out = np.empty((rows*self.cache.ch,cols*self.cache.cw),np.uint8)
         for i,(scalar,_fg,_bg,flags) in enumerate(records):
-            scalar=render_scalar(scalar)
-            mask=self.cache.get(scalar,flags&3)
-            for bit,cp in ((4,0x2581),(8,0x2500),(128,0x2594)):
-                if flags&bit: mask=np.maximum(mask,self.cache.get(cp))
-            if flags&64: mask=np.zeros_like(mask)
+            left=records[i-1] if i%cols and flags&1024 else records[i]
+            emoji_scalar=self.emoji.selected(left) if self.emoji else None
+            if emoji_scalar is not None:
+                mask=self.emoji.mask(emoji_scalar,int(bool(flags&1024)),left[3])
+            else:
+                scalar=render_scalar(scalar)
+                mask=self.cache.get(scalar,flags&3)
+                for bit,cp in ((4,0x2581),(8,0x2500),(128,0x2594)):
+                    if flags&bit: mask=np.maximum(mask,self.cache.get(cp))
+                if flags&64: mask=np.zeros_like(mask)
             y,x=divmod(i,cols)
             out[y*self.cache.ch:(y+1)*self.cache.ch,x*self.cache.cw:(x+1)*self.cache.cw]=mask
         return out
@@ -713,7 +718,9 @@ def main():
         while not workspace.quit and time.monotonic() < deadline:
             while transitions:
                 acquire=transitions.pop(0)
+                if pointer_input and not acquire: pointer_input.leave()
                 kms.vt(acquire)
+                if pointer_input and acquire: pointer_input.resume()
                 print(json.dumps({'event':'vt-acquire' if acquire else 'vt-release','monotonic':time.monotonic()}),file=sys.stderr,flush=True)
                 dirty=True
             if presenter:

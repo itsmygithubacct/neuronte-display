@@ -15,6 +15,7 @@
   "neuronte": {
     "weights": "neuronte-split-v5.nrt",
     "weights_sha256": "8a072c27f1241c536b04ea77d82efdc005399762421f86bd18d950206528ec83",
+    "weights_revision": "4b6b126d13f95673ab31c2582051e6b22db16e3b",
     "baseline_weights": "neuronte-split-v4.nrt",
     "baseline_weights_sha256": "1e2d89c4d8cc96e7c23eeec2ef688d31222aeb5e4303ecb2dce0c7c783aa8cf5",
     "license": "MIT",

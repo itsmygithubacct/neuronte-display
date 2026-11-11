@@ -69,6 +69,7 @@ def reconstruct(document, weights, library, video_weights=None, emoji_weights=No
             allowed={int(row['scalar'][2:],16) for row in json.loads(Path(emoji_manifest).read_text())['glyphs']}
             lib.neuronte_set_samples.argtypes=lib.neuronte_set_theme.argtypes=[C.c_void_p,C.c_int]
             lib.neuronte_draw_half.argtypes=[C.c_void_p,C.c_void_p]+[C.c_int]*7+[C.c_uint32,C.c_int,C.c_uint32]
+            lib.neuronte_coverage_half.argtypes=[C.c_void_p,C.c_uint32]+[C.c_int]*4+[C.POINTER(C.c_float)]
             lib.neuronte_set_samples(emoji,2)
             for index,(value,fg,bg,flags) in enumerate(document['records']):
                 if not flags&512: continue
@@ -90,6 +91,11 @@ def reconstruct(document, weights, library, video_weights=None, emoji_weights=No
                     if not flags&64 and lib.neuronte_draw_half(emoji,packed.ctypes.data,cw,cw,ch,0,0,cw,ch,value,half,0xff000000|fg):
                         raise ValueError('reference half drawing failed')
                     frame[y*ch:(y+1)*ch,(x+half)*cw:(x+half+1)*cw]=np.stack([packed>>s&255 for s in (16,8,0)],axis=2).astype(np.uint8)
+                    coverage=np.zeros((ch,cw),np.float32)
+                    if not flags&64 and lib.neuronte_coverage_half(emoji,value,half,cw,ch,2,
+                            coverage.ctypes.data_as(C.POINTER(C.c_float))):
+                        raise ValueError('reference emoji alpha failed')
+                    ink[y*ch:(y+1)*ch,(x+half)*cw:(x+half+1)*cw]=np.floor(np.clip(coverage,0,1)*255+.5).astype(np.uint8)
         if document.get('planes'):
             if not video_weights or lib.neuronte_open_file(str(video_weights).encode(),C.byref(video)):
                 raise ValueError('video weights required')

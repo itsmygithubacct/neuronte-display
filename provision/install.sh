@@ -20,5 +20,5 @@ fi
 # Fresh installer sets this file to neuronte explicitly; add-on installs leave
 # X as the default and can test using a one-boot pleb.display=neuronte argument.
 if [ ! -e "$root/etc/pleb/display.env" ]; then
-    printf 'PLEB_DISPLAY=x\n' > "$root/etc/pleb/display.env"
+    printf '# Set PLEB_DISPLAY=x or neuronte here to override session.env.\n# Unset inherits session.env; otherwise the default is x.\n' > "$root/etc/pleb/display.env"
 fi

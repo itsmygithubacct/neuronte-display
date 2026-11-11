@@ -11,11 +11,14 @@ import fcntl
 import pty
 import select
 import signal
+import shutil
 import struct
 import subprocess
 import termios
 import time
 import unittest
+from unittest.mock import patch
+import types
 import zlib
 import numpy as np
 from PIL import Image
@@ -109,6 +112,32 @@ class InputTests(unittest.TestCase):
             self.assertTrue(device.read(read)); self.assertEqual(sink.events,[(0,239,1,1)])
         finally: os.close(write); device.close()
 
+    def test_vt_release_cancels_drag_and_reacquire_refreshes_tablet(self):
+        class Sink:
+            cols=80;rows=30;cw=8;ch=16;pointer=(0,0)
+            def __init__(self):self.events=[]
+            def mouse(self,*args):self.events.append(args)
+        sink=Sink();device=EvdevPointer([],sink)
+        read,write=os.pipe();os.set_blocking(read,False)
+        device.devices[read]={0:(0,32767),1:(0,32767)};device.pending_buttons[read]=[]
+        def enqueue(events):os.write(write,b''.join(device.event.pack(0,0,*e) for e in events))
+        try:
+            enqueue([(1,272,1),(0,0,0)]);device.read(read)
+            device.leave()
+            self.assertEqual(sink.events,[(0,0,0,1),(0,0,1,1)])
+            before=list(sink.events)
+            enqueue([(1,272,0),(3,0,15000),(0,0,0)])
+            device.read(read,active=False)
+            self.assertEqual(sink.events,before);self.assertEqual(device.button,0)
+            enqueue([(1,272,1),(3,0,20000),(0,0,0)])
+            with patch('display_io.fcntl.ioctl',return_value=struct.pack('6i',32767,0,32767,0,0,0)):
+                device.resume()
+            self.assertEqual(sink.events,before)
+            self.assertEqual(sink.pointer,(639,479));self.assertEqual(device.button,0)
+            enqueue([(2,0,-1),(0,0,0)]);device.read(read)
+            self.assertEqual(sink.events[-1],(638,479,2,0))
+        finally:os.close(write);device.close()
+
     def test_fragmented_outer_input_and_modifiers(self):
         class Sink:
             def __init__(self): self.keys=bytearray(); self.events=[]
@@ -196,6 +225,39 @@ class GraphicsTests(unittest.TestCase):
             actual=reconstruct(doc,HOME/'weights/neuronte-split-v4.nrt',HOME/'build/libneuronte.so',VIDEO/'weights/neuronte-video-masks-v0.nrt')
             np.testing.assert_array_equal(actual,frame)
 
+    @unittest.skipUnless((VIDEO/'weights/neuronte-video-masks-v0.nrt').exists(),'video weights required')
+    def test_negative_image_preserves_known_colour_half_ink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);weights=root/'emoji.nrt';weights.write_bytes(fixture())
+            manifest=root/'emoji.json';manifest.write_text(json.dumps(dict(version=1,cell_columns=2,glyphs=[dict(scalar='U+1F600')])))
+            cache=d.MaskCache(HOME/'weights/neuronte-split-v4.nrt',HOME/'build/libneuronte.so',root/'cache')
+            self.addCleanup(cache.close)
+            graphics=Graphics(VIDEO,HOME/'build/libneuronte.so')
+            pixels=np.full((16,16,3),(0,0,255),np.uint8)
+            item=types.SimpleNamespace(generation=999,sx=0,sy=0,sw=16,sh=16,dw=16,dh=16,x=0,y=0,z=-1)
+            pane=types.SimpleNamespace(terminal=types.SimpleNamespace(images=lambda:[(item,pixels)]))
+            for theme,level in (('dark',255),('light',128)):
+                emoji=Emoji(weights,manifest,HOME/'build/libneuronte.so',8,16,theme);self.addCleanup(emoji.close)
+                for hidden in (False,True):
+                    records=[(32,d.FG,d.BG,0)]*(20*18)
+                    records[40]=(0x1f600,d.FG,d.BG,512|3|(64 if hidden else 0))
+                    records[41]=(32,d.FG,d.BG,1024)
+                    renderer=d.Renderer(cache,emoji)
+                    frame=renderer.render(records,20,18).copy()
+                    workspace=types.SimpleNamespace(cw=8,ch=16,current={'panes':[pane]},
+                        layout=lambda:[(0,1,20,16)],text_ink=renderer.ink(records,20,18))
+                    graphics.composite(frame,workspace)
+                    # Ground truth comes from the analytic artwork, not from
+                    # the renderer or reference's compositing implementation.
+                    expected=pixels.copy()
+                    if not hidden:expected[:,:8]=[level,0,0];expected[:,8:10]=[0,level,0]
+                    np.testing.assert_array_equal(frame[32:48,:16],expected)
+                    doc=dict(cols=20,rows=18,screen=[160,288],cell_width=8,cell_height=16,
+                        records=json.loads(json.dumps(records)),emoji=emoji.identity,planes=graphics.records)
+                    ref=reconstruct(doc,HOME/'weights/neuronte-split-v4.nrt',HOME/'build/libneuronte.so',
+                        VIDEO/'weights/neuronte-video-masks-v0.nrt',weights,manifest)
+                    np.testing.assert_array_equal(frame,ref)
+
 
 class StyleTests(unittest.TestCase):
     def test_two_colour_emoji_halves_themes_and_manifest(self):
@@ -250,6 +312,23 @@ class ProvisionTests(unittest.TestCase):
             module.generate(root/'x',root,'pleb.display=x')
             self.assertFalse((root/'x').exists())
             self.assertIn('USER_SETTING=keep',env.read_text())
+
+    def test_addon_install_preserves_existing_selection_and_boot_override(self):
+        module=importlib.machinery.SourceFileLoader('install_generator',str(ROOT/'provision/neuronte-generator')).load_module()
+        for selected in ('neuronte','x',None):
+            with self.subTest(selected=selected),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);payload=root/'payload';target=root/'target'
+                shutil.copytree(ROOT/'provision',payload/'provision')
+                (target/'etc/pleb').mkdir(parents=True)
+                env=target/'etc/pleb/session.env'
+                if selected:env.write_text('PLEB_DISPLAY='+selected+'\nUSER_SETTING=keep\n')
+                subprocess.run(['sh',str(payload/'provision/install.sh'),str(target),'pleb'],check=True)
+                module.generate(root/'normal',target,'')
+                self.assertEqual((root/'normal/graphical.target.wants/neuronte-display.service').is_symlink(),selected=='neuronte')
+                module.generate(root/'x',target,'pleb.display=x');self.assertFalse((root/'x').exists())
+                module.generate(root/'neural',target,'pleb.display=neuronte')
+                self.assertTrue((root/'neural/graphical.target.wants/neuronte-display.service').is_symlink())
+                if selected:self.assertEqual(env.read_text(),'PLEB_DISPLAY='+selected+'\nUSER_SETTING=keep\n')
 
     def test_normal_installer_keeps_partition_choice(self):
         source='d-i pkgsel/include string xorg fonts-example \\\n lightdm\nd-i partman-auto/disk string /dev/sda\nd-i preseed/late_command string old\n'
