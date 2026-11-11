@@ -1,0 +1,9 @@
+{
+  "ghostty-vt": {
+    "repository": "https://github.com/ghostty-org/ghostty.git",
+    "revision": "b0c421fcd2e290629d4285c181b52fe2f2095f06",
+    "license": "MIT"
+  },
+  "neuronte": {"weights": "neuronte-split-v4.nrt", "license": "MIT"},
+  "kitty-framebuffer": {"license": "MIT", "source": "../kitty-framebuffer"}
+}
