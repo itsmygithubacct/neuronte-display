@@ -28,7 +28,8 @@ try:
  tty.setraw(0)
  os.write(1,b'\x1b[2J\x1b[HMOUSE_WAIT\x1b[?1000h\x1b[?1006h')
  data=b''
- while not data.endswith(b'M'): data+=os.read(0,1)
+ # Consume the complete press/release pair before restoring the shell.
+ while not data.endswith(b'm'): data+=os.read(0,1)
  os.write(1,b'\x1b[?1000l\x1b[?1006l\r\nMOUSE_OK '+repr(data).encode()+b'\r\n')
 finally: termios.tcsetattr(0,termios.TCSANOW,saved)
 '''
@@ -52,13 +53,18 @@ def main():
     q=QMP(args.qmp); results=[]
     def capture(name,marker=None):
         time.sleep(.3)
-        for _ in range(20):
+        for _ in range(50):
             before=ssh('cat /tmp/neuronte-frame.json')
+            doc=json.loads(before)
+            text=''.join(chr(c[0]) if isinstance(c[0],int) else ''.join(map(chr,c[0])) for c in doc['records'])
+            if marker and marker not in text:
+                time.sleep(.1)
+                continue
             q.execute('screendump',filename=str((args.output/(name+'.ppm')).resolve()))
             after=ssh('cat /tmp/neuronte-frame.json')
             if before==after: break
             time.sleep(.15)
-        else: raise AssertionError('display did not settle')
+        else: raise AssertionError(name+' did not reach a stable expected frame: '+str(marker))
         doc=json.loads(after); (args.output/(name+'.json')).write_bytes(after)
         text=''.join(chr(c[0]) if isinstance(c[0],int) else ''.join(map(chr,c[0])) for c in doc['records'])
         if marker and marker not in text: raise AssertionError(name+' missing marker: '+marker)
