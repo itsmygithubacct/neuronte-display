@@ -100,6 +100,11 @@ def main():
         q.text('tmux resize-pane -R 3\n'); capture('tmux-resized')
         q.text('tmux kill-server\n')
         q.text('python3 /tmp/neuronte-mouse.py\n'); time.sleep(.4)
+        # The installer can leave QEMU's PS/2 vmmouse selected. Route external
+        # acceptance events to the USB tablet opened by the guest session.
+        tablet=next(m for m in q.execute('query-mice') if m['name']=='QEMU HID Tablet')
+        q.execute('human-monitor-command',**{'command-line':f"mouse_set {tablet['index']}"})
+        (args.output/'qemu-mice.json').write_text(json.dumps(q.execute('query-mice'),indent=2)+'\n')
         q.execute('input-send-event',events=[
             {'type':'abs','data':{'axis':'x','value':10000}},
             {'type':'abs','data':{'axis':'y','value':12000}}])
