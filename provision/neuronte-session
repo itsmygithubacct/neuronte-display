@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+NEURONTE_PREFIX=${NEURONTE_PREFIX:-/opt/neuronte-display}
+export LD_LIBRARY_PATH="$NEURONTE_PREFIX/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cd "$NEURONTE_PREFIX"
+set -- --backend kms --home "$NEURONTE_PREFIX" --video-home "$NEURONTE_PREFIX"
+selected_weights=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["neuronte"]["weights"])' "$NEURONTE_PREFIX/deps.lock.json")
+set -- "$@" --weights "${NEURONTE_WEIGHTS:-$NEURONTE_PREFIX/weights/$selected_weights}"
+if [ -n "${NEURONTE_MODE:-}" ]; then set -- "$@" --mode "$NEURONTE_MODE"; fi
+if [ -n "${NEURONTE_SNAPSHOT:-}" ]; then set -- "$@" --snapshot "$NEURONTE_SNAPSHOT" --snapshot-live; fi
+if [ -n "${NEURONTE_HISTORY:-}" ]; then set -- "$@" --snapshot-history "$NEURONTE_HISTORY"; fi
+if [ -n "${NEURONTE_EMOJI_WEIGHTS:-}" ]; then
+    set -- "$@" --emoji-weights "$NEURONTE_EMOJI_WEIGHTS" --emoji-manifest "${NEURONTE_EMOJI_MANIFEST:?emoji manifest required}" --theme "${NEURONTE_THEME:-auto}"
+fi
+for pointer in /dev/input/by-id/*-event-mouse; do
+    [ ! -r "$pointer" ] || set -- "$@" --pointer-device "$pointer"
+done
+if [ "${PLEB_DESKTOP:-0}" = 1 ]; then
+    exec python3 neuronte_display.py "$@" -- python3 "$NEURONTE_PREFIX/cell_desktop.py"
+fi
+exec python3 neuronte_display.py "$@" -- /bin/bash --login

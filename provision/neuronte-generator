@@ -1,0 +1,36 @@
+#!/usr/bin/python3
+"""Select the opt-in display at boot without changing the default X entry."""
+import os
+from pathlib import Path
+import re
+import sys
+
+
+def generate(output, root=Path('/'), cmdline=None):
+    selected = 'x'
+    for filename in ('etc/pleb/session.env','etc/pleb/display.env'):
+        path=root/filename
+        if path.exists():
+            for line in path.read_text().splitlines():
+                match=re.fullmatch(r'\s*(?:export\s+)?PLEB_DISPLAY=[\'"]?(x|neuronte)[\'"]?\s*',line)
+                if match: selected=match[1]
+    if cmdline is None:
+        cmdline=(root/'proc/cmdline').read_text()
+    for word in cmdline.split():
+        if word in ('pleb.display=x','pleb.display=neuronte'):
+            selected=word.split('=',1)[1]
+    if selected != 'neuronte':
+        return
+    output=Path(output)
+    (output/'graphical.target.wants').mkdir(parents=True,exist_ok=True)
+    for name,target in (
+        ('display-manager.service','/dev/null'),
+        ('getty@tty1.service','/dev/null'),
+        ('graphical.target.wants/neuronte-display.service','/etc/systemd/system/neuronte-display.service')):
+        path=output/name
+        if not path.exists() and not path.is_symlink():
+            path.symlink_to(target)
+
+
+if __name__=='__main__':
+    generate(sys.argv[2])  # early generator dir overrides /etc display-manager aliases

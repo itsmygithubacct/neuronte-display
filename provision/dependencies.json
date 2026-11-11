@@ -1,0 +1,9 @@
+{
+  "display": "neuronte",
+  "runtime": ["python3", "python3-numpy", "libdrm2", "libpng16-16t64", "zlib1g", "libc6", "libgcc-s1", "bash", "kbd", "util-linux", "systemd"],
+  "acceptance": ["openssh-server", "sudo", "tmux", "vim-tiny", "procps"],
+  "build": ["build-essential", "pkg-config", "libdrm-dev", "libpng-dev", "zlib1g-dev"],
+  "font_files": [],
+  "display_servers": [],
+  "bundled": ["libghostty-vt", "libneuronte", "neuronte-split-v4.nrt", "neuronte-video-masks-v0.nrt"]
+}

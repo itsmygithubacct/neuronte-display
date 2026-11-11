@@ -1,0 +1,30 @@
+[Unit]
+Description=Neuronte character-cell display
+After=systemd-user-sessions.service systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+Conflicts=getty@tty1.service
+ConditionPathExists=/opt/neuronte-display/neuronte_display.py
+
+[Service]
+Type=simple
+User=pleb
+SupplementaryGroups=video input tty
+PAMName=login
+EnvironmentFile=-/etc/default/neuronte-display
+ExecStart=/usr/local/bin/neuronte-session
+Restart=on-failure
+RestartSec=3
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+UtmpIdentifier=tty1
+UtmpMode=user
+KillMode=control-group
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical.target

@@ -2,8 +2,30 @@
   "ghostty-vt": {
     "repository": "https://github.com/ghostty-org/ghostty.git",
     "revision": "b0c421fcd2e290629d4285c181b52fe2f2095f06",
-    "license": "MIT"
+    "license": "MIT",
+    "zig": "0.16.0",
+    "patches_sha256": "683e5d227136e66fa7110f44e2a3edf9c7644f565c9ff2bb96569b1d0f68230b",
+    "patches": {
+      "0001-ghostty-absolute-image-placement.patch": "ac803936bca274b1b8ccfbbd42e633f8999eebb45de3df62828aa6e768f453a7",
+      "0002-ghostty-overlapping-frame-copy.patch": "b6156d1411e1b151c39e995b53d57fc4fd2d1169d701f67153eb2f036aaa461d",
+      "0003-ghostty-kitty-animation-tick.patch": "93e21ac6b6b148ce49364c43a67a2f667f92d598df4b2854f819a5f59fcaa18e",
+      "0004-ghostty-kitty-virtual-placement-iterator.patch": "8f3806e58e8502a14de17fd203e9d345dbc9840f7b238424319af77f9bea3afe"
+    }
   },
-  "neuronte": {"weights": "neuronte-split-v4.nrt", "license": "MIT"},
-  "kitty-framebuffer": {"license": "MIT", "source": "../kitty-framebuffer"}
+  "neuronte": {
+    "weights": "neuronte-split-v5.nrt",
+    "weights_sha256": "8a072c27f1241c536b04ea77d82efdc005399762421f86bd18d950206528ec83",
+    "baseline_weights": "neuronte-split-v4.nrt",
+    "baseline_weights_sha256": "1e2d89c4d8cc96e7c23eeec2ef688d31222aeb5e4303ecb2dce0c7c783aa8cf5",
+    "license": "MIT",
+    "styled_api_revision": "5c4fec11bdd81a25b240d8e3abcd032bc58eefca",
+    "video_revision": "4f01059f4fe6737f0d470bc51bb51b6a479d9cef",
+    "video_weights": "neuronte-video-masks-v0.nrt",
+    "video_weights_sha256": "d81fb4099a2f333e654b2f57a85ff0c13d57ca3dc7d5a4a942bc350650e4707c"
+  },
+  "kitty-framebuffer": {
+    "license": "MIT",
+    "source": "../kitty-framebuffer",
+    "revision": "43277b4339133c473763fad28ef6057f2819fb9a"
+  }
 }
