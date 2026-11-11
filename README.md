@@ -67,8 +67,13 @@ is the existing U+2196 symbol net, with no new generic icon bundle activated.
 
 Masks are sampled twice per axis, rounded to eight bits and cached by scalar,
 style, weights/library hashes and geometry. Persistent entries have checksums
-and atomic replacement. Bold uses an SDF offset; italic uses a shear. Reverse,
-dim, underline, strike and overline remain supported. Block cursors invert
+and atomic replacement. The current `neuronte_coverage_styled` API implements
+synthetic raster styles: bold takes the maximum coverage over rightward offsets
+through `max(1, round(cell_width / 32))` pixels; italic shifts each raster row
+about the design baseline. Both are clipped to the original cell. This differs
+from the original proposed SDF offset/query-coordinate approach and does not
+select a separately trained italic face. Reverse, dim, underline, strike and
+overline remain supported. Block cursors invert
 colours; cursor blinking and distinct bar/underline cursors are not implemented.
 
 Full graphemes up to 64 scalars are preserved in grid records. NFC-composable
