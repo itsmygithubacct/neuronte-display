@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Opt-in colour acceptance on an owned guest; restore its session afterward."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -16,13 +17,21 @@ def main():
     p.add_argument('--key',required=True);p.add_argument('--known-hosts',required=True)
     p.add_argument('--runtime',type=Path,required=True);p.add_argument('--weights',type=Path,required=True)
     p.add_argument('--manifest',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--analytic-fixture',action='store_true',help='explicit single-scalar analytic test, not real300 acceptance')
     p.add_argument('--analytic-negative',action='store_true',help='known red/green half fixture with a blue image behind it')
+    p.add_argument('--timeout',type=float,default=120,help='maximum seconds for each cold-render wait')
     args=p.parse_args();args.output.mkdir(parents=True,exist_ok=True)
+    if args.timeout<=0:p.error('--timeout must be positive')
     command=['ssh','-i',args.key,'-p',args.port,'-o','BatchMode=yes','-o','UserKnownHostsFile='+args.known_hosts,'pleb@127.0.0.1']
     def ssh(script,data=None):return subprocess.check_output(command+[script],input=data)
     original=ssh('cat /etc/default/neuronte-display')
-    scalars=[int(row['scalar'][2:],16) for row in json.loads(args.manifest.read_text())['glyphs']]
-    assert len(scalars)<=300,'acceptance fixture supports at most 300 scalars'
+    manifest=json.loads(args.manifest.read_text())
+    assert manifest['version']==1 and manifest['cell_columns']==2
+    scalars=[int(row['scalar'][2:],16) for row in manifest['glyphs']]
+    analytic=args.analytic_fixture or args.analytic_negative
+    assert len(scalars)==(1 if analytic else 300),'real acceptance requires exactly300 manifest scalars'
+    assert len(set(scalars))==len(scalars),'manifest scalars must be unique'
+    weight_hash=hashlib.sha256(args.weights.read_bytes()).hexdigest()
     source="import sys\nsys.stdout.write('\\x1b[?2027h\\x1b[2J\\x1b[H\\x1b[?25lCOLOUR_EMOJI_ACCEPT\\r\\n')\n"
     # The application opts into grapheme width mode, then VS16 requests wide
     # presentation. Bare text-presentation scalars remain narrow by default.
@@ -40,14 +49,19 @@ def main():
         for theme in ('dark','light'):
             addition=('\nNEURONTE_EMOJI_WEIGHTS=/tmp/neuronte-colour.nrt\nNEURONTE_EMOJI_MANIFEST=/tmp/neuronte-colour.json\nNEURONTE_THEME='+theme+'\n').encode()
             ssh('sudo tee /etc/default/neuronte-display >/dev/null',original+addition)
+            before_restart=float(ssh("cut -d' ' -f1 /proc/uptime"))
             ssh('sudo systemctl restart neuronte-display')
-            for _ in range(100):
+            deadline=time.monotonic()+args.timeout
+            while time.monotonic()<deadline:
                 time.sleep(.1)
                 doc=json.loads(ssh('cat /tmp/neuronte-frame.json'))
-                if doc.get('emoji') and doc['emoji']['theme']==theme:break
+                if (doc.get('emoji') and doc['emoji']['theme']==theme
+                    and doc['emoji']['weights']==weight_hash
+                    and doc['timing']['presented_monotonic']>=before_restart):break
             else:raise AssertionError('optional colour mode did not start')
             q.text('python3 /tmp/neuronte-colour.py\n')
-            for _ in range(100):
+            deadline=time.monotonic()+args.timeout
+            while time.monotonic()<deadline:
                 time.sleep(.1)
                 data=ssh('cat /tmp/neuronte-frame.json');doc=json.loads(data)
                 text=''.join(chr(c[0]) if isinstance(c[0],int) else ''.join(map(chr,c[0])) for c in doc['records'])
@@ -60,15 +74,20 @@ def main():
             expected=reconstruct(doc,weights,args.runtime/'build/libneuronte.so',
                 args.runtime/'weights/neuronte-video-masks-v0.nrt',args.weights,args.manifest)
             actual=read_ppm(args.output/(theme+'.ppm'))
-            observed=[];half_differences=0
+            observed=[];half_differences=0;half_cells=[]
             cw,ch=doc['cell_width'],doc['cell_height']
             for i,record in enumerate(doc['records']):
                 if not record[3]&512:continue
                 value=record[0][0] if isinstance(record[0],list) else record[0]
                 if value not in scalars:continue
                 observed.append(value);y,x=divmod(i,doc['cols'])
+                assert x+1<doc['cols'] and doc['records'][i+1][3]&1024,'right half is not reserved'
                 left=actual[y*ch:(y+1)*ch,x*cw:(x+1)*cw]
                 right=actual[y*ch:(y+1)*ch,(x+1)*cw:(x+2)*cw]
+                for half,pixels in enumerate((left,right)):
+                    assert pixels.shape==(ch,cw,3),'half is clipped'
+                    half_cells.append(dict(scalar=f'U+{value:04X}',half=half,column=x+half,row=y,
+                        sha256=hashlib.sha256(pixels.tobytes()).hexdigest()))
                 half_differences+=int(not np.array_equal(left,right))
             delta=np.abs(expected.astype(int)-actual.astype(int))
             if args.analytic_negative:
@@ -81,9 +100,15 @@ def main():
                 np.testing.assert_array_equal(actual[y*ch:(y+1)*ch,x*cw:(x+2)*cw],known)
             result=dict(theme=theme,equal=bool(np.array_equal(expected,actual)),max_error=int(delta.max()),
                 requested=len(scalars),observed=len(observed),distinct_half_pairs=half_differences,
-                pixels=actual.shape[0]*actual.shape[1],identity=doc['emoji'],analytic_negative=args.analytic_negative)
+                observed_half_cells=len(half_cells),left_half_cells=sum(h['half']==0 for h in half_cells),
+                right_half_cells=sum(h['half']==1 for h in half_cells),grapheme_mode=2027,
+                pixels=actual.shape[0]*actual.shape[1],identity=doc['emoji'],analytic_fixture=analytic,
+                analytic_negative=args.analytic_negative)
+            (args.output/(theme+'-half-cells.json')).write_text(json.dumps(half_cells,indent=2)+'\n')
             results.append(result);print(json.dumps(result),flush=True)
-            assert result['equal'] and set(observed)==set(scalars)
+            (args.output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
+            assert result['equal'] and sorted(observed)==sorted(scalars)
+            assert len(half_cells)==(2 if analytic else 600)
         (args.output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
     finally:
         q.close()
