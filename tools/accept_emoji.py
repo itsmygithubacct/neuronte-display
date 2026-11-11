@@ -16,6 +16,7 @@ def main():
     p.add_argument('--key',required=True);p.add_argument('--known-hosts',required=True)
     p.add_argument('--runtime',type=Path,required=True);p.add_argument('--weights',type=Path,required=True)
     p.add_argument('--manifest',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--analytic-negative',action='store_true',help='known red/green half fixture with a blue image behind it')
     args=p.parse_args();args.output.mkdir(parents=True,exist_ok=True)
     command=['ssh','-i',args.key,'-p',args.port,'-o','BatchMode=yes','-o','UserKnownHostsFile='+args.known_hosts,'pleb@127.0.0.1']
     def ssh(script,data=None):return subprocess.check_output(command+[script],input=data)
@@ -27,6 +28,9 @@ def main():
     source+='values='+repr(scalars)+'\n'
     source+="for start in range(0,len(values),20):\n sys.stdout.write(''.join(chr(cp)+'\\ufe0f ' for cp in values[start:start+20])+'\\r\\n')\n"
     source+="sys.stdout.write('END_EMOJI\\r\\n');sys.stdout.flush()\n"
+    if args.analytic_negative:
+        assert scalars==[0x1f600],'analytic check requires its single-scalar fixture'
+        source+="import base64\nsys.stdout.write('\\x1b[2;1H\\x1b_Ga=T,f=24,s=16,v=16,z=-1,q=2;'+base64.b64encode(bytes([0,0,255])*256).decode()+'\\x1b\\\\');sys.stdout.flush()\n"
     q=QMP(args.qmp);results=[]
     try:
         ssh('cat > /tmp/neuronte-colour.nrt',args.weights.read_bytes())
@@ -66,9 +70,17 @@ def main():
                 right=actual[y*ch:(y+1)*ch,(x+1)*cw:(x+2)*cw]
                 half_differences+=int(not np.array_equal(left,right))
             delta=np.abs(expected.astype(int)-actual.astype(int))
+            if args.analytic_negative:
+                assert len(doc['planes'])==1
+                index=next(i for i,c in enumerate(doc['records']) if c[3]&512)
+                y,x=divmod(index,doc['cols']);assert (cw,ch)==(8,16)
+                known=np.full((16,16,3),(0,0,255),np.uint8)
+                level=255 if theme=='dark' else 128
+                known[:,:8]=[level,0,0];known[:,8:10]=[0,level,0]
+                np.testing.assert_array_equal(actual[y*ch:(y+1)*ch,x*cw:(x+2)*cw],known)
             result=dict(theme=theme,equal=bool(np.array_equal(expected,actual)),max_error=int(delta.max()),
                 requested=len(scalars),observed=len(observed),distinct_half_pairs=half_differences,
-                pixels=actual.shape[0]*actual.shape[1],identity=doc['emoji'])
+                pixels=actual.shape[0]*actual.shape[1],identity=doc['emoji'],analytic_negative=args.analytic_negative)
             results.append(result);print(json.dumps(result),flush=True)
             assert result['equal'] and set(observed)==set(scalars)
         (args.output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
