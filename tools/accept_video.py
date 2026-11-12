@@ -54,13 +54,18 @@ try:
   out+='\x1b_Ga=T,f=24,s=64,v=48,i=97531,p=1,C=1,q=2;'+base64.b64encode(pixels).decode()+'\x1b\\'
   sys.stdout.write(out);sys.stdout.flush();last=index
 finally:
- sys.stdout.write('\x1b_Ga=d,d=A;\x1b\\\x1b[10;1HVIDEO_SEQUENCE_DONE\r\n');sys.stdout.flush()
+ sys.stdout.write('\x1b_Ga=d,d=A;\x1b\\\x1b[?25h\x1b[10;1HVIDEO_SEQUENCE_DONE\r\n');sys.stdout.flush()
 '''
     ssh('cat > /tmp/neuronte-video-sequence.py',source.encode())
     ssh('printf 0 > /tmp/neuronte-video-step')
     q=QMP(args.qmp);results=[]
     lock=json.loads((args.runtime/'deps.lock.json').read_text())['neuronte']
     try:
+        # Keep the independently checked source rectangle unobscured by the
+        # real pointer. This moves the guest input device; it edits no capture.
+        tablet=next(m for m in q.execute('query-mice') if m['name']=='QEMU HID Tablet')
+        q.execute('human-monitor-command',**{'command-line':f"mouse_set {tablet['index']}"})
+        q.execute('input-send-event',events=[dict(type='abs',data=dict(axis=axis,value=32767)) for axis in ('x','y')])
         q.text('python3 /tmp/neuronte-video-sequence.py\n')
         for index in range(args.frames):
             if index:ssh(f'printf {index} > /tmp/neuronte-video-step.next && mv /tmp/neuronte-video-step.next /tmp/neuronte-video-step')

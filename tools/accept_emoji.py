@@ -42,7 +42,7 @@ def main():
         guest_lock=json.loads(ssh('cat /opt/neuronte-display/deps.lock.json'))['neuronte']['emoji']
         assert local_lock==guest_lock,'installed emoji lock differs from reference payload'
         assert local_lock['weights_sha256']==weight_hash and local_lock['manifest_sha256']==manifest_hash
-        guest_payload=json.loads(ssh('cat /opt/neuronte-display/manifest.json'))
+        guest_payload=json.loads(ssh('sudo cat /opt/neuronte-display/manifest.json'))
         asset_proof=[]
         for kind in ('weights','manifest'):
             relative='weights/'+local_lock[kind];path='/opt/neuronte-display/'+relative
