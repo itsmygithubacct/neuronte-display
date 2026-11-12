@@ -146,13 +146,21 @@ class GraphemeAssetTests(unittest.TestCase):
             for value in ((106,769),(106,769,776)):
                 np.testing.assert_array_equal(g.mask(value),c.get(0xfffd))
                 self.assertFalse(g.supported(value))
-        for h,cut in ((9,3),(12,4),(14,5),(16,5),(32,10)):
-            c=self.cache(8,h);g=Graphemes(c)
+        for w,h,cut,shift in ((8,9,3,1),(8,12,4,1),(8,14,5,1),(8,16,5,1),(16,32,10,2)):
+            c=self.cache(w,h);g=Graphemes(c)
+            # At2x2 sampling, row samples are at y+.25/y+.75. A whole
+            # boundary within the gap is conservative: the last removed
+            # sample precedes the body, and the first retained follows the dot.
+            self.assertLess((cut-.25)*20/h,7.25)
+            self.assertGreater((cut+.25)*20/h,6.05)
             expected=c.get(106).copy();expected[:cut]=0
-            expected[:,1:]=np.maximum(expected[:,1:],c.get(180)[:,:-1])
+            expected[:,shift:]=np.maximum(expected[:,shift:],c.get(180)[:,:-shift])
             np.testing.assert_array_equal(g.mask((106,769)),expected)
             self.assertTrue(g.supported((106,769)))
-            reference=reference_composer(POLICY,c.identity['weights'],8,h,c.get)
+            # Every retained body pixel survives the union, including rows
+            #10/11 at16x32; this is not ceil(7*h/20), which would cut at12.
+            self.assertTrue(np.all(g.mask((106,769))[cut:]>=c.get(106)[cut:]))
+            reference=reference_composer(POLICY,c.identity['weights'],w,h,c.get)
             np.testing.assert_array_equal(g.mask((106,769)),reference((106,769)))
 
     def test_actual_below_anchors_on_descenders_and_baseline_edges(self):

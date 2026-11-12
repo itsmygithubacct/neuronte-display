@@ -66,6 +66,12 @@ raster row, so this composition is unavailable: this affects heights8,10,11.
 At heights9,12,14,16,32 the cutoffs are respectively3,4,5,5,10 rows. No
 untrained dotless-j0237 is inferred, and the cutoff never retains a pixel
 overlapping the source dot merely to claim small-cell support.
+The actual2×2 samples are at row+.25 and row+.75. For the chosen boundary c,
+the last removed sample `(c-.25)*20/height` precedes the body and the first
+retained sample `(c+.25)*20/height` follows the dot. Requiring the entire pixel
+boundary to lie in the gap is deliberately more conservative than separating
+only sample centres. This is not a floor-to-ceil change at source y7:16×32
+keeps rows10 and11, where learned body coverage must not be discarded.
 
 Below marks use the centre of the lowest learned body ink; ogonek uses its
 rightmost point. The body is fitted above the source baseline when needed,
