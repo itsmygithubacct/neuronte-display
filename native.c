@@ -107,6 +107,14 @@ int nd_replies(nd_terminal *n, uint8_t *data, size_t cap) {
 
 static uint32_t rgb(GhosttyColorRgb c) { return ((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | c.b; }
 
+/* Read after nd_snapshot; keep the existing two-int cursor buffer ABI. */
+int nd_cursor_style(nd_terminal *n) {
+    GhosttyRenderStateCursor cur = GHOSTTY_INIT_SIZED(GhosttyRenderStateCursor);
+    if (!n || ghostty_render_state_get(n->render, GHOSTTY_RENDER_STATE_DATA_CURSOR, &cur) != GHOSTTY_SUCCESS)
+        return -1;
+    return (int)cur.visual_style;
+}
+
 int nd_snapshot(nd_terminal *n, nd_cell *out, size_t cap, int *cursor) {
     if (!n || !out || !cursor || cap < (size_t)n->cols * n->height) return -1;
     if (ghostty_render_state_update(n->render, n->terminal) != GHOSTTY_SUCCESS) return -1;

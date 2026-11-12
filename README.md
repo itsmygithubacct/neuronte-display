@@ -62,8 +62,9 @@ The prefix is **Ctrl-A**, followed by one key:
 Each pane has its own PTY; hidden tabs continue running. Pane and outer-window
 resizes update parser geometry and deliver SIGWINCH to children. The Kitty
 backend reserves the last outer row according to kitty-framebuffer's contract.
-Mouse input uses the parser's negotiated terminal protocol. The visible pointer
-is the existing U+2196 symbol net, with no new generic icon bundle activated.
+Mouse input uses the parser's negotiated terminal protocol. The default pointer uses the existing U+2196 symbol net. Explicit icon mode
+selects the accepted U+E0B2 triangle with an aligned hotspot and contrasting
+foreground over light/dark pixels; legacy application defaults are unchanged.
 
 Masks are sampled twice per axis, rounded to eight bits and cached by scalar,
 style, weights/library hashes and geometry. Persistent entries have checksums
@@ -73,8 +74,9 @@ through `max(1, round(cell_width / 32))` pixels; italic shifts each raster row
 about the design baseline. Both are clipped to the original cell. This differs
 from the original proposed SDF offset/query-coordinate approach and does not
 select a separately trained italic face. Reverse, dim, underline, strike and
-overline remain supported. Block cursors invert
-colours; cursor blinking and distinct bar/underline cursors are not implemented.
+overline remain supported. Block cursors reverse text; colour cursors use a separate learned contrast
+overlay in either half, preserving one artwork palette. Bar and underline use
+learned U+258F/U+2581 masks. Cursor blinking is not implemented.
 
 Full graphemes up to64 scalars are preserved in grid records. Known trained NFC
 characters retain their exact masks. With the hash-bound approved text bundles,
@@ -112,22 +114,36 @@ with `CSI ? 2027 h` before using VS16 to request emoji width; the pinned parser
 keeps its compatibility default with mode 2027 disabled. Bare text-presentation
 scalars stay narrow, and VS15 keeps text presentation. ZWJ, skin-tone and flag
 sequences use the documented complex
-cluster fallback. Each half calls `neuronte_draw_half` independently; layered
-colours and both theme palettes are retained. `--theme` accepts `auto`, `dark`
+cluster fallback. Style0 calls `neuronte_draw_half` independently for each half and retains its
+accepted pixels. Bold/italic transform every coverage layer in the joined
+two-cell glyph before compositing, including clear layers. Learned line
+decorations span both cells, dim affects all coloured ink, and hidden suppresses
+artwork/decorations and their image-occlusion alpha. Both palettes are retained. `--theme` accepts `auto`, `dark`
 and `light`; auto uses cell-background luminance. The bounded cache includes
 both halves, palette, colours and geometry. The analytic fixture checks unequal
 halves and both palettes; trained-bundle acceptance is separate evidence.
 
 `python3 cell_desktop.py` opens a keyboard-driven Terminal/Files/System launcher.
 It is a small character-cell provider, not a complete Kilix desktop replacement.
-Generic icon adoption remains held for coordinator approval.
+Stage5 icon support in this display is explicitly opt-in:
+
+```sh
+python3 neuronte_display.py --icon-weights weights/neuronte-icon-v1.nrt \
+  --icon-manifest weights/icons.json --theme auto
+```
+
+Only the167 accepted, hash-bound labels select this one-cell colour route. It
+shares the colour-layer style contract and supplies the learned icon pointer.
+See [COLOUR.md](COLOUR.md) for layer order, clear/foreground rules, wide seams,
+decoration alpha and pointer geometry. Generic legacy-app/widget adoption and
+window-manager PNG replacement remain deferred.
 
 ## RC9 package and installer
 
 ```sh
 python3 tools/package.py --neuronte-home "$NEURONTE_SOURCE" \
   --video-home "$VIDEO_SOURCE" --ghostty "$BUILD_ROOT/ghostty" \
-  --emoji-home "$TRAINING_SOURCE" \
+  --emoji-home "$TRAINING_SOURCE" --icon-home "$TRAINING_SOURCE" \
   --weights "$APPROVED_SPLIT_V5" \
   --output "$BUILD_ROOT/display.tar.gz"
 python3 tools/build_installer.py --source-iso "$DEBIAN_ISO" \
@@ -141,7 +157,10 @@ accepted emoji pair is pinned in the lock, `--emoji-home "$TRAINING_SOURCE"` is
 required and exports both assets from that immutable revision. Their hashes and
 300-scalar inventory are checked; runtime selection stays optional. The final
 `tools/accept_emoji.py --installed-assets` gate verifies and uses those installed
-files without uploading weights or a manifest into the guest.
+files without uploading weights or a manifest into the guest. The icon lock
+requires `--icon-home`; the package verifies the immutable model and labelled
+metadata and carries its derived167-scalar inventory. All asset hashes are
+recorded in `deps.lock.json` and the payload manifest.
 The session selects the locked text bundle; `NEURONTE_WEIGHTS` can explicitly
 select a preserved baseline. Runtime dependencies are in `provision/dependencies.json`. No mutable host parser
 installation is needed by an installed payload.
@@ -159,6 +178,9 @@ The accepted RC9 pair is installed as
 these paths to select it. The application must still request mode2027/VS16 for
 two-cell presentation. The bundled pair is pinned to training commit
 `c1a182d53ff4ecfc61e1b9c3f8b3c5d57a0505a3`; its hashes are in the dependency lock.
+Optional icons use `NEURONTE_ICON_WEIGHTS=/opt/neuronte-display/weights/neuronte-icon-v1.nrt`
+and `NEURONTE_ICON_MANIFEST=/opt/neuronte-display/weights/icons.json`. The
+accepted icon source commit is `faa4cb3ffab792886486bc07f924e037440fdf87`.
 A second VT retains kernel-console recovery.
 
 The installer builder derives from the existing Plebian-OS preseed without

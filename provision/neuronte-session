@@ -3,14 +3,17 @@ set -eu
 NEURONTE_PREFIX=${NEURONTE_PREFIX:-/opt/neuronte-display}
 export LD_LIBRARY_PATH="$NEURONTE_PREFIX/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 cd "$NEURONTE_PREFIX"
-set -- --backend kms --home "$NEURONTE_PREFIX" --video-home "$NEURONTE_PREFIX"
+set -- --backend kms --home "$NEURONTE_PREFIX" --video-home "$NEURONTE_PREFIX" --theme "${NEURONTE_THEME:-auto}"
 selected_weights=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["neuronte"]["weights"])' "$NEURONTE_PREFIX/deps.lock.json")
 set -- "$@" --weights "${NEURONTE_WEIGHTS:-$NEURONTE_PREFIX/weights/$selected_weights}"
 if [ -n "${NEURONTE_MODE:-}" ]; then set -- "$@" --mode "$NEURONTE_MODE"; fi
 if [ -n "${NEURONTE_SNAPSHOT:-}" ]; then set -- "$@" --snapshot "$NEURONTE_SNAPSHOT" --snapshot-live; fi
 if [ -n "${NEURONTE_HISTORY:-}" ]; then set -- "$@" --snapshot-history "$NEURONTE_HISTORY"; fi
 if [ -n "${NEURONTE_EMOJI_WEIGHTS:-}" ]; then
-    set -- "$@" --emoji-weights "$NEURONTE_EMOJI_WEIGHTS" --emoji-manifest "${NEURONTE_EMOJI_MANIFEST:?emoji manifest required}" --theme "${NEURONTE_THEME:-auto}"
+    set -- "$@" --emoji-weights "$NEURONTE_EMOJI_WEIGHTS" --emoji-manifest "${NEURONTE_EMOJI_MANIFEST:?emoji manifest required}"
+fi
+if [ -n "${NEURONTE_ICON_WEIGHTS:-}" ]; then
+    set -- "$@" --icon-weights "$NEURONTE_ICON_WEIGHTS" --icon-manifest "${NEURONTE_ICON_MANIFEST:?icon manifest required}"
 fi
 for pointer in /dev/input/by-id/*-event-mouse; do
     [ ! -r "$pointer" ] || set -- "$@" --pointer-device "$pointer"

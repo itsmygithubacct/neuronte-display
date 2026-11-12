@@ -1,0 +1,525 @@
+{
+  "version": 1,
+  "cell_columns": 1,
+  "weights_sha256": "1c2023a5f7af300b930e58ecdef36ff5c79a5585a16acefc03a70b4c5529a70e",
+  "source": {
+    "revision": "faa4cb3ffab792886486bc07f924e037440fdf87",
+    "metadata": "weights/neuronte-icon-v1.json",
+    "metadata_sha256": "82d7d526f5160b2c9e046b187e507c8540b82c3f8f143429aed0d197a0f03c1a"
+  },
+  "glyphs": [
+    {
+      "scalar": "U+F030C"
+    },
+    {
+      "scalar": "U+F0731"
+    },
+    {
+      "scalar": "U+F0737"
+    },
+    {
+      "scalar": "U+F072E"
+    },
+    {
+      "scalar": "U+F0734"
+    },
+    {
+      "scalar": "U+EAB9"
+    },
+    {
+      "scalar": "U+F0293"
+    },
+    {
+      "scalar": "U+F0156"
+    },
+    {
+      "scalar": "U+F2C9"
+    },
+    {
+      "scalar": "U+F028"
+    },
+    {
+      "scalar": "U+F073"
+    },
+    {
+      "scalar": "U+F1EB"
+    },
+    {
+      "scalar": "U+F05CB"
+    },
+    {
+      "scalar": "U+F036C"
+    },
+    {
+      "scalar": "U+F036D"
+    },
+    {
+      "scalar": "U+F08AE"
+    },
+    {
+      "scalar": "U+F035B"
+    },
+    {
+      "scalar": "U+F0079"
+    },
+    {
+      "scalar": "U+F007A"
+    },
+    {
+      "scalar": "U+F007B"
+    },
+    {
+      "scalar": "U+F007C"
+    },
+    {
+      "scalar": "U+F007D"
+    },
+    {
+      "scalar": "U+F007E"
+    },
+    {
+      "scalar": "U+F007F"
+    },
+    {
+      "scalar": "U+F0080"
+    },
+    {
+      "scalar": "U+F0081"
+    },
+    {
+      "scalar": "U+F0082"
+    },
+    {
+      "scalar": "U+F0083"
+    },
+    {
+      "scalar": "U+F0091"
+    },
+    {
+      "scalar": "U+F0E7"
+    },
+    {
+      "scalar": "U+E654"
+    },
+    {
+      "scalar": "U+F110"
+    },
+    {
+      "scalar": "U+F04C"
+    },
+    {
+      "scalar": "U+F07B"
+    },
+    {
+      "scalar": "U+F07C"
+    },
+    {
+      "scalar": "U+F015"
+    },
+    {
+      "scalar": "U+F15B"
+    },
+    {
+      "scalar": "U+F016"
+    },
+    {
+      "scalar": "U+F0F6"
+    },
+    {
+      "scalar": "U+F1C9"
+    },
+    {
+      "scalar": "U+F126"
+    },
+    {
+      "scalar": "U+F023"
+    },
+    {
+      "scalar": "U+F09C"
+    },
+    {
+      "scalar": "U+F017"
+    },
+    {
+      "scalar": "U+F00C"
+    },
+    {
+      "scalar": "U+F00D"
+    },
+    {
+      "scalar": "U+F071"
+    },
+    {
+      "scalar": "U+F05A"
+    },
+    {
+      "scalar": "U+F013"
+    },
+    {
+      "scalar": "U+F120"
+    },
+    {
+      "scalar": "U+F002"
+    },
+    {
+      "scalar": "U+F0C2"
+    },
+    {
+      "scalar": "U+F019"
+    },
+    {
+      "scalar": "U+F093"
+    },
+    {
+      "scalar": "U+F007"
+    },
+    {
+      "scalar": "U+F0C0"
+    },
+    {
+      "scalar": "U+F005"
+    },
+    {
+      "scalar": "U+F004"
+    },
+    {
+      "scalar": "U+F02E"
+    },
+    {
+      "scalar": "U+F02B"
+    },
+    {
+      "scalar": "U+F02D"
+    },
+    {
+      "scalar": "U+F03E"
+    },
+    {
+      "scalar": "U+F030"
+    },
+    {
+      "scalar": "U+F0F3"
+    },
+    {
+      "scalar": "U+F0E0"
+    },
+    {
+      "scalar": "U+F075"
+    },
+    {
+      "scalar": "U+F01C"
+    },
+    {
+      "scalar": "U+F014"
+    },
+    {
+      "scalar": "U+F0C1"
+    },
+    {
+      "scalar": "U+F0C6"
+    },
+    {
+      "scalar": "U+F0C7"
+    },
+    {
+      "scalar": "U+F0C5"
+    },
+    {
+      "scalar": "U+F02F"
+    },
+    {
+      "scalar": "U+F084"
+    },
+    {
+      "scalar": "U+F06E"
+    },
+    {
+      "scalar": "U+F070"
+    },
+    {
+      "scalar": "U+F067"
+    },
+    {
+      "scalar": "U+F068"
+    },
+    {
+      "scalar": "U+F05E"
+    },
+    {
+      "scalar": "U+F0B0"
+    },
+    {
+      "scalar": "U+F04B"
+    },
+    {
+      "scalar": "U+F04D"
+    },
+    {
+      "scalar": "U+F04E"
+    },
+    {
+      "scalar": "U+F04A"
+    },
+    {
+      "scalar": "U+F021"
+    },
+    {
+      "scalar": "U+F0E2"
+    },
+    {
+      "scalar": "U+F08B"
+    },
+    {
+      "scalar": "U+F090"
+    },
+    {
+      "scalar": "U+F053"
+    },
+    {
+      "scalar": "U+F054"
+    },
+    {
+      "scalar": "U+F077"
+    },
+    {
+      "scalar": "U+F078"
+    },
+    {
+      "scalar": "U+F060"
+    },
+    {
+      "scalar": "U+F061"
+    },
+    {
+      "scalar": "U+F062"
+    },
+    {
+      "scalar": "U+F063"
+    },
+    {
+      "scalar": "U+F0C9"
+    },
+    {
+      "scalar": "U+F03A"
+    },
+    {
+      "scalar": "U+F0CE"
+    },
+    {
+      "scalar": "U+F121"
+    },
+    {
+      "scalar": "U+F11C"
+    },
+    {
+      "scalar": "U+F108"
+    },
+    {
+      "scalar": "U+F109"
+    },
+    {
+      "scalar": "U+F0AC"
+    },
+    {
+      "scalar": "U+F0AD"
+    },
+    {
+      "scalar": "U+F0B1"
+    },
+    {
+      "scalar": "U+F041"
+    },
+    {
+      "scalar": "U+F0EB"
+    },
+    {
+      "scalar": "U+F024"
+    },
+    {
+      "scalar": "U+F132"
+    },
+    {
+      "scalar": "U+F05D"
+    },
+    {
+      "scalar": "U+F05C"
+    },
+    {
+      "scalar": "U+F040"
+    },
+    {
+      "scalar": "U+F0C4"
+    },
+    {
+      "scalar": "U+F0D1"
+    },
+    {
+      "scalar": "U+F135"
+    },
+    {
+      "scalar": "U+F185"
+    },
+    {
+      "scalar": "U+F186"
+    },
+    {
+      "scalar": "U+F08D"
+    },
+    {
+      "scalar": "U+F011"
+    },
+    {
+      "scalar": "U+F0A0"
+    },
+    {
+      "scalar": "U+F1C0"
+    },
+    {
+      "scalar": "U+F233"
+    },
+    {
+      "scalar": "U+F012"
+    },
+    {
+      "scalar": "U+F064"
+    },
+    {
+      "scalar": "U+F112"
+    },
+    {
+      "scalar": "U+F095"
+    },
+    {
+      "scalar": "U+F188"
+    },
+    {
+      "scalar": "U+F065"
+    },
+    {
+      "scalar": "U+F066"
+    },
+    {
+      "scalar": "U+F055"
+    },
+    {
+      "scalar": "U+F056"
+    },
+    {
+      "scalar": "U+F254"
+    },
+    {
+      "scalar": "U+E0A0"
+    },
+    {
+      "scalar": "U+E0A1"
+    },
+    {
+      "scalar": "U+E0A2"
+    },
+    {
+      "scalar": "U+E0A3"
+    },
+    {
+      "scalar": "U+E0B0"
+    },
+    {
+      "scalar": "U+E0B1"
+    },
+    {
+      "scalar": "U+E0B2"
+    },
+    {
+      "scalar": "U+E0B3"
+    },
+    {
+      "scalar": "U+E0B4"
+    },
+    {
+      "scalar": "U+E0B5"
+    },
+    {
+      "scalar": "U+E0B6"
+    },
+    {
+      "scalar": "U+E0B7"
+    },
+    {
+      "scalar": "U+E0B8"
+    },
+    {
+      "scalar": "U+E0B9"
+    },
+    {
+      "scalar": "U+E0BA"
+    },
+    {
+      "scalar": "U+E0BB"
+    },
+    {
+      "scalar": "U+E0BC"
+    },
+    {
+      "scalar": "U+E0BD"
+    },
+    {
+      "scalar": "U+E0BE"
+    },
+    {
+      "scalar": "U+E0BF"
+    },
+    {
+      "scalar": "U+E0D6"
+    },
+    {
+      "scalar": "U+E0D7"
+    },
+    {
+      "scalar": "U+EE00"
+    },
+    {
+      "scalar": "U+EE01"
+    },
+    {
+      "scalar": "U+EE02"
+    },
+    {
+      "scalar": "U+EE03"
+    },
+    {
+      "scalar": "U+EE04"
+    },
+    {
+      "scalar": "U+EE05"
+    },
+    {
+      "scalar": "U+EE06"
+    },
+    {
+      "scalar": "U+EE07"
+    },
+    {
+      "scalar": "U+EE08"
+    },
+    {
+      "scalar": "U+EE09"
+    },
+    {
+      "scalar": "U+EE0A"
+    },
+    {
+      "scalar": "U+EE0B"
+    }
+  ],
+  "pointer": {
+    "scalar": "U+E0B2",
+    "hotspot_numerator": [
+      0,
+      1
+    ],
+    "hotspot_denominator": [
+      1,
+      2
+    ],
+    "description": "Accepted left-pointing powerline triangle; hotspot at x=0,y=floor(cell_height/2)."
+  }
+}

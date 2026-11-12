@@ -31,6 +31,16 @@
       "manifest": "emoji-manifest.json",
       "manifest_source": "font/emoji-manifest.json",
       "manifest_sha256": "7968bf332a4ff5e9a96926eab3d0be0930d5522b0c54070e671074131cb6022b"
+    },
+    "icons": {
+      "revision": "faa4cb3ffab792886486bc07f924e037440fdf87",
+      "weights": "neuronte-icon-v1.nrt",
+      "weights_source": "weights/neuronte-icon-v1.nrt",
+      "weights_sha256": "1c2023a5f7af300b930e58ecdef36ff5c79a5585a16acefc03a70b4c5529a70e",
+      "metadata_source": "weights/neuronte-icon-v1.json",
+      "metadata_sha256": "82d7d526f5160b2c9e046b187e507c8540b82c3f8f143429aed0d197a0f03c1a",
+      "manifest": "icons.json",
+      "manifest_sha256": "3c763375fc59697b6d274a5b871b86be87d16a998c3590e400a4b3d439e2f763"
     }
   },
   "kitty-framebuffer": {

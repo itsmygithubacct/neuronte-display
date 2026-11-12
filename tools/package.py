@@ -31,6 +31,34 @@ def locked_emoji(home,entry):
     return result
 
 
+def locked_icons(home,entry,manifest_path):
+    """Derive availability from accepted labels, never from a routing result."""
+    if not re.fullmatch(r'[0-9a-f]{40}',entry['revision']):
+        raise ValueError('icon revision must be a full immutable Git commit')
+    blobs = {}
+    for kind in ('weights','metadata'):
+        data = subprocess.check_output(['git','-C',str(home),'show',entry['revision']+':'+entry[kind+'_source']])
+        if hashlib.sha256(data).hexdigest()!=entry[kind+'_sha256']:
+            raise ValueError('icon '+kind+' differs from lock')
+        blobs[kind] = data
+    raw = Path(manifest_path).read_bytes()
+    if hashlib.sha256(raw).hexdigest()!=entry['manifest_sha256']:
+        raise ValueError('icon manifest differs from lock')
+    manifest = json.loads(raw)
+    labels = json.loads(blobs['metadata'])['training']['labelled'].split()
+    listed = [row['scalar'] for row in manifest['glyphs']]
+    if (manifest.get('version')!=1 or manifest.get('cell_columns')!=1 or
+        len(labels)!=167 or len(set(labels))!=167 or listed!=labels or
+        manifest.get('weights_sha256')!=entry['weights_sha256'] or
+        manifest.get('source')!=dict(revision=entry['revision'],metadata=entry['metadata_source'],
+                                     metadata_sha256=entry['metadata_sha256']) or
+        manifest['pointer']['scalar'] not in labels):
+        raise ValueError('icon inventory must match all167 accepted labels and source identity')
+    for name in (entry['weights'],entry['manifest']):
+        if Path(name).name!=name:raise ValueError('icon package name must be a basename')
+    return {'weights/'+entry['weights']:blobs['weights'],'weights/'+entry['manifest']:raw}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--neuronte-home',type=Path,required=True)
@@ -38,6 +66,7 @@ def main():
     parser.add_argument('--ghostty',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--emoji-home',type=Path,help='repository containing the immutable accepted emoji pair in deps.lock.json')
+    parser.add_argument('--icon-home',type=Path,help='repository containing the pinned accepted icon weights and labelled metadata')
     parser.add_argument('--weights',type=Path,help='approved text bundle matching deps.lock.json')
     args=parser.parse_args()
     if args.output.exists(): parser.error('output exists; choose a new artifact path')
@@ -46,6 +75,9 @@ def main():
     emoji=closure['neuronte'].get('emoji')
     if bool(emoji)!=bool(args.emoji_home):
         parser.error('an accepted emoji lock and --emoji-home must be supplied together')
+    icons=closure['neuronte'].get('icons')
+    if bool(icons)!=bool(args.icon_home):
+        parser.error('an accepted icon lock and --icon-home must be supplied together')
     lock=closure['ghostty-vt']
     if (args.ghostty/'revision').read_text().strip()!=lock['revision']:
         raise ValueError('parser revision differs from the lock')
@@ -66,10 +98,11 @@ def main():
     if hashlib.sha256(video['weights/'+net['video_weights']]).hexdigest()!=net['video_weights_sha256']:
         raise ValueError('video weights differ from lock')
     if emoji:video.update(locked_emoji(args.emoji_home,emoji))
+    if icons:video.update(locked_icons(args.icon_home,icons,root/'icons.json'))
     args.output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
         staging=Path(directory)/'neuronte-display'
-        files={name:root/name for name in ('neuronte_display.py','display_io.py','display_graphics.py','display_emoji.py','display_graphemes.py','graphemes.json','GRAPHEMES.md','cell_desktop.py','LICENSE','README.md','deps.lock.json','Makefile','native.c','kms.c','tools/build_parser.py','tools/package.py','build/libneuronte-display.so','build/libneuronte-kms.so')}
+        files={name:root/name for name in ('neuronte_display.py','display_io.py','display_graphics.py','display_emoji.py','display_icons.py','display_art.py','display_colour.py','COLOUR.md','display_graphemes.py','graphemes.json','GRAPHEMES.md','cell_desktop.py','LICENSE','README.md','deps.lock.json','Makefile','native.c','kms.c','tools/build_parser.py','tools/package.py','build/libneuronte-display.so','build/libneuronte-kms.so')}
         files.update({str(p.relative_to(root)):p for p in (root/'provision').iterdir() if p.is_file()})
         files.update({str(p.relative_to(root)):p for p in (root/'vendor/ghostty').rglob('*') if p.is_file()})
         files.update({'build/libghostty-vt.so.0':args.ghostty/'lib/libghostty-vt.so.0',

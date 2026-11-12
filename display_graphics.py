@@ -82,12 +82,59 @@ class Graphics:
         return frame
 
 
-def pointer(frame, position, cache, scalar=0x2196):
+def cursor_overlay(frame, cursor, records, cols, cache):
+    """Block inversion is in the grid; other shapes use learned block masks.
+
+    Draw after image planes so a positive-z image cannot hide the caret. The
+    renderer's retained frame stays cursor-free, restoring old positions.
+    """
+    if not cursor or cursor['shape'] == 'block' and not cursor.get('colour'):
+        return frame
+    scalar = {'bar':0x258f, 'underline':0x2581, 'block':0x2588}[cursor['shape']]
+    x, y = cursor['column'], cursor['row']
+    if x < 0 or x >= cols or y < 0 or y*cols+x >= len(records):
+        return frame
+    _, fg, bg, flags = records[y*cols+x]
+    if flags & 16: fg, bg = bg, fg
+    foreground = np.array([fg>>s&255 for s in (16,8,0)],np.uint16)
+    if flags & 32:
+        foreground = (foreground+np.array([bg>>s&255 for s in (16,8,0)],np.uint16))//2
+    x, y = x*cache.cw, y*cache.ch
+    height, width = frame.shape[:2]
+    if x >= width or y >= height: return frame
+    a = cache.get(scalar)[:height-y,:width-x,None].astype(np.uint16)
+    patch = frame[y:y+a.shape[0],x:x+a.shape[1]]
+    if cursor.get('colour'):
+        # A cursor is an overlay, not SGR reverse or half-local theme selection.
+        # Contrast also remains visible on fully opaque fixed-colour artwork.
+        luma = (patch.astype(np.int32)*[299,587,114]).sum(axis=2)
+        foreground = np.where(luma[...,None]>127500,0,255).astype(np.uint16)
+    patch[:] = ((foreground*a+patch.astype(np.uint16)*(255-a)+127)//255).astype(np.uint8)
+    return frame
+
+
+def pointer(frame, position, cache, scalar=0x2196, icons=None):
     if position is None:
         return frame
     x,y=position
     h,w=frame.shape[:2]
     if not 0<=x<w or not 0<=y<h:
+        return frame
+    if icons is not None:
+        # Mouse reports retain (x,y); only the artwork origin is offset.
+        x -= icons.hotspot[0]; y -= icons.hotspot[1]
+        x0,y0,x1,y1 = max(0,x),max(0,y),min(w,x+icons.cw),min(h,y+icons.ch)
+        background = np.zeros((icons.ch,icons.cw,3),np.uint8)
+        background[y0-y:y1-y,x0-x:x1-x] = frame[y0:y1,x0:x1]
+        # Auto follows the hotspot. The trained entry0 pointer contrasts with
+        # each underlying pixel, including white images and mixed light/dark.
+        target = frame[position[1],position[0]].astype(int)
+        bg = int(target[0]<<16|target[1]<<8|target[2])
+        white = icons.unstyled(icons.pointer_scalar,0xffffff,background,icons.mode(bg))
+        black = icons.unstyled(icons.pointer_scalar,0,background,icons.mode(bg))
+        luminance = (background.astype(np.int32)*[299,587,114]).sum(axis=2)
+        painted = np.where((luminance>127500)[...,None],black,white)
+        frame[y0:y1,x0:x1] = painted[y0-y:y1-y,x0-x:x1-x]
         return frame
     mask=cache.get(scalar)[:h-y,:w-x,None].astype(np.uint16)
     patch=frame[y:y+mask.shape[0],x:x+mask.shape[1]]

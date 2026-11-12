@@ -23,8 +23,9 @@ from display_graphemes import Graphemes, IDENTITY as GRAPHEME_IDENTITY
 
 import numpy as np
 from display_io import KMS, OuterInput, EvdevPointer
-from display_graphics import Graphics, pointer
+from display_graphics import Graphics, pointer, cursor_overlay
 from display_emoji import Emoji
+from display_icons import Icons
 
 HERE = Path(__file__).resolve().parent
 FG, BG = 0xDCE2EB, 0x13171E
@@ -51,6 +52,7 @@ def native():
         "nd_feed": ([C.c_void_p, C.c_void_p, C.c_size_t], C.c_int),
         "nd_replies": ([C.c_void_p, C.c_void_p, C.c_size_t], C.c_int),
         "nd_snapshot": ([C.c_void_p, C.POINTER(NativeCell), C.c_size_t, C.POINTER(C.c_int)], C.c_int),
+        "nd_cursor_style": ([C.c_void_p], C.c_int),
         "nd_mouse": ([C.c_void_p] + [C.c_int]*5 + [C.c_void_p, C.c_size_t], C.c_int),
         "nd_images": ([C.c_void_p, C.POINTER(NativeImage), C.c_size_t], C.c_int),
         "nd_presenter_open": ([C.c_int, C.c_int], C.c_void_p),
@@ -72,6 +74,7 @@ class Terminal:
         if not self.ptr:
             raise RuntimeError("Cannot create terminal parser")
         self.cols, self.rows = cols, rows
+        self.cursor_style = 'block'
 
     def resize(self, cols, rows, cw=8, ch=16):
         if self.lib.nd_resize(self.ptr, cols, rows, cw, ch):
@@ -92,6 +95,10 @@ class Terminal:
         cursor = (C.c_int * 2)()
         if self.lib.nd_snapshot(self.ptr, cells, len(cells), cursor) != len(cells):
             raise RuntimeError("Cannot capture complete terminal grid")
+        style = self.lib.nd_cursor_style(self.ptr)
+        if style not in (0, 1, 2, 3):
+            raise RuntimeError("Cannot capture terminal cursor style")
+        self.cursor_style = {0:'bar', 1:'block', 2:'underline', 3:'block'}[style]
         out = []
         for c in cells:
             points = "".join(chr(c.points[i]) for i in range(c.length))
@@ -249,13 +256,41 @@ def render_scalar(value):
 
 
 class Renderer:
-    def __init__(self, cache, emoji=None):
+    def __init__(self, cache, emoji=None, icons=None):
         self.cache = cache
         self.emoji = emoji
+        self.icons = icons
         self.graphemes = Graphemes(cache)
         self.previous = []
         self.frame = None
         self.last = {}
+
+    def lines(self, flags):
+        if not flags & (4|8|128): return None
+        mask = np.zeros((self.cache.ch,self.cache.cw),np.uint8)
+        for bit,scalar in ((4,0x2581),(8,0x2500),(128,0x2594)):
+            if flags&bit: mask = np.maximum(mask,self.cache.get(scalar))
+        return mask
+
+    def artwork(self, records, index, cols):
+        record = records[index]
+        half = int(bool(index%cols and record[3]&1024))
+        left = records[index-half]
+        scalar = self.emoji.selected(left) if self.emoji else None
+        if scalar is not None and (half or (index%cols+1<cols and records[index+1][3]&1024)):
+            # Remove the grid's text-cursor reversal before selecting a
+            # colour palette. The cursor is a separate contrast overlay.
+            flags = left[3] ^ (16 if left[3]&2048 else 0)
+            return self.emoji, scalar, half, left[1], left[2], flags
+        scalar = self.icons.selected(record) if self.icons else None
+        if scalar is not None:
+            return self.icons, scalar, 0, record[1], record[2], record[3] ^ (16 if record[3]&2048 else 0)
+        return None
+
+    def cursor(self, frame, cursor, records, cols):
+        if cursor:
+            cursor['colour'] = bool(self.artwork(records,cursor['row']*cols+cursor['column'],cols))
+        return cursor_overlay(frame,cursor,records,cols,self.cache)
 
     def cell(self, record, cached=True):
         scalar, fg, bg, flags = record
@@ -280,10 +315,10 @@ class Renderer:
     def ink(self, records, cols, rows):
         out = np.empty((rows*self.cache.ch,cols*self.cache.cw),np.uint8)
         for i,(scalar,_fg,_bg,flags) in enumerate(records):
-            left=records[i-1] if i%cols and flags&1024 else records[i]
-            emoji_scalar=self.emoji.selected(left) if self.emoji else None
-            if emoji_scalar is not None:
-                mask=self.emoji.mask(emoji_scalar,int(bool(flags&1024)),left[3])
+            art = self.artwork(records,i,cols)
+            if art:
+                asset,cp,half,_,_,style = art
+                mask=asset.mask(cp,half,style,self.lines(style))
             else:
                 mask=self.graphemes.mask(scalar,flags&3)
                 for bit,cp in ((4,0x2581),(8,0x2500),(128,0x2594)):
@@ -304,13 +339,16 @@ class Renderer:
         changed = 0
         for index, record in enumerate(records):
             left=records[index-1] if index%cols and record[3]&1024 else record
-            scalar=self.emoji.selected(left) if self.emoji else None
             dependent_change=(index%cols and record[3]&1024 and
                               (index-1>=len(self.previous) or left!=self.previous[index-1]))
             if force or index >= len(self.previous) or record != self.previous[index] or dependent_change:
                 y, x = divmod(index, cols)
                 y, x = y * self.cache.ch, x * self.cache.cw
-                cell=(self.emoji.cell(scalar,int(bool(record[3]&1024)),*left[1:]) if scalar is not None else self.cell(record))
+                art = self.artwork(records,index,cols)
+                if art:
+                    asset,cp,half,fg,bg,style = art
+                    cell = asset.cell(cp,half,fg,bg,style,self.lines(style))
+                else: cell = self.cell(record)
                 self.frame[y:y + self.cache.ch, x:x + self.cache.cw] = cell
                 changed += 1
         self.previous = list(records)
@@ -318,7 +356,8 @@ class Renderer:
                      "styled_cells": sum(bool(c[3] & 3) for c in records),
                      "composed_grapheme_cells": sum(len(self.graphemes.plan(c[0]) or ())>1 and
                          self.graphemes.supported(c[0],c[3]&3) for c in records),
-                     "unsupported_grapheme_cells": sum(bool(c[3]&256) or not self.graphemes.supported(c[0],c[3]&3) for c in records)}
+                     "unsupported_grapheme_cells": sum(not self.artwork(records,i,cols) and
+                         (bool(c[3]&256) or not self.graphemes.supported(c[0],c[3]&3)) for i,c in enumerate(records))}
         return self.frame
 
 
@@ -567,6 +606,7 @@ class Workspace:
 
     def grid(self):
         records = [(32, FG, BG, 0)] * (self.cols * self.rows)
+        self.cursor = None
 
         def text(x, y, value, foreground=FG, background=0x263448, width=None):
             for index, char in enumerate(value[:self.cols - x if width is None else width]):
@@ -587,7 +627,10 @@ class Workspace:
             if i == self.focus and 0 <= cx < w and 0 <= cy < h - 1:
                 index = (y+1+cy)*self.cols+x+cx
                 cp, fg, bg, flags = records[index]
-                records[index] = (cp, fg, bg, flags ^ 16)
+                shape = getattr(pane.terminal, 'cursor_style', 'block')
+                self.cursor = dict(column=x+cx, row=y+1+cy, shape=shape)
+                if shape == 'block':
+                    records[index] = (cp, fg, bg, (flags ^ 16) | 2048)
             if i < len(rectangles) - 1:
                 if self.current["vertical"]:
                     for row in range(1, self.rows-1):
@@ -603,7 +646,7 @@ class Workspace:
             pane.close()
 
 
-def save_snapshot(path, frame, records, workspace, cache, timing, graphics=None, screen=None, emoji=None, history=None):
+def save_snapshot(path, frame, records, workspace, cache, timing, graphics=None, screen=None, emoji=None, history=None, icons=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width, _ = frame.shape
@@ -616,7 +659,9 @@ def save_snapshot(path, frame, records, workspace, cache, timing, graphics=None,
         "cell_width": cache.cw, "cell_height": cache.ch, "cache_identity": cache.identity,
         "records": records, "timing": timing, "cache": dict(cache.stats),
         "pointer": workspace.pointer, "planes": graphics.records if graphics else [],
+        "cursor": getattr(workspace, 'cursor', None),
         "emoji": emoji.identity if emoji else None,
+        "icons": icons.identity if icons else None,
         "graphemes": GRAPHEME_IDENTITY,
         "screen": screen or [width,height], "frame_sha256":hashlib.sha256(raw).hexdigest(),
         "rgb_sha256":hashlib.sha256(frame.tobytes()).hexdigest()}
@@ -650,12 +695,16 @@ def main():
     parser.add_argument("--video-weights", type=Path)
     parser.add_argument("--emoji-weights", type=Path, help="explicit standalone two-cell colour bundle")
     parser.add_argument("--emoji-manifest", type=Path, help="matching availability manifest; required with emoji weights")
+    parser.add_argument("--icon-weights", type=Path, help="opt-in accepted single-cell colour icons and pointer")
+    parser.add_argument("--icon-manifest", type=Path, help="hash-bound trained icon inventory and pointer hotspot")
     parser.add_argument("--theme", choices=("auto","dark","light"), default="auto")
     parser.add_argument("--headless-seconds", type=float)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if bool(args.emoji_weights)!=bool(args.emoji_manifest):
         parser.error('--emoji-weights and --emoji-manifest must be supplied together')
+    if bool(args.icon_weights)!=bool(args.icon_manifest):
+        parser.error('--icon-weights and --icon-manifest must be supplied together')
     if not 20 <= args.cols <= 240 or not 18 <= args.rows <= 120:
         parser.error("geometry must be 20..240 columns and 18..120 rows")
     if args.headless_seconds is not None and args.headless_seconds <= 0:
@@ -671,6 +720,7 @@ def main():
     pointer_input = None
     graphics = None
     emoji = None
+    icons = None
     outer = None
     transitions = []
     old_signals = {}
@@ -695,6 +745,9 @@ def main():
         if args.emoji_weights:
             emoji=Emoji(args.emoji_weights,args.emoji_manifest,args.library or args.home/'build/libneuronte.so',cache.cw,cache.ch,args.theme)
             renderer.emoji=emoji
+        if args.icon_weights:
+            icons=Icons(args.icon_weights,args.icon_manifest,args.library or args.home/'build/libneuronte.so',cache.cw,cache.ch,args.theme)
+            renderer.icons=icons
         workspace.resize(args.cols,args.rows)
         if args.video_home:
             graphics=Graphics(args.video_home,args.library or args.home/'build/libneuronte.so',args.video_weights)
@@ -737,7 +790,8 @@ def main():
                 if graphics:
                     workspace.text_ink=renderer.ink(records,workspace.cols,workspace.rows)
                     graphics.composite(frame,workspace)
-                pointer(frame,workspace.pointer,cache)
+                renderer.cursor(frame,workspace.cursor,records,workspace.cols)
+                pointer(frame,workspace.pointer,cache,icons=icons)
                 if presenter:
                     rgba = np.concatenate((frame, np.full((*frame.shape[:2],1),255,np.uint8)), axis=2)
                     if workspace.lib.nd_present(presenter, rgba.ctypes.data, frame.shape[1], frame.shape[0]):
@@ -746,7 +800,7 @@ def main():
                 renderer.last['presented_monotonic']=time.monotonic()
                 if args.snapshot and args.snapshot_live:
                     save_snapshot(args.snapshot,frame,records,workspace,cache,renderer.last,graphics,
-                                  [kms.width,kms.height] if kms else None,emoji,args.snapshot_history)
+                                  [kms.width,kms.height] if kms else None,emoji,args.snapshot_history,icons)
             dirty = workspace.poll(0.04, keyboard=interactive,input_handler=outer.feed if outer else None,
                                    pointer_input=pointer_input,active=kms.active if kms else True)
             if outer and not dirty:
@@ -755,7 +809,7 @@ def main():
                 dirty=pending
         if args.snapshot and frame is not None:
             save_snapshot(args.snapshot,frame,records,workspace,cache,renderer.last,graphics,
-                          [kms.width,kms.height] if kms else None,emoji,args.snapshot_history)
+                          [kms.width,kms.height] if kms else None,emoji,args.snapshot_history,icons)
     finally:
         if outer:
             os.write(1,b'\x1b[?1003l\x1b[?1006l\x1b[?1016l')
@@ -767,6 +821,8 @@ def main():
             kms.close()
         if emoji:
             emoji.close()
+        if icons:
+            icons.close()
         if saved_termios is not None:
             termios.tcsetattr(0, termios.TCSADRAIN, saved_termios)
         if workspace:

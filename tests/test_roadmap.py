@@ -267,7 +267,16 @@ class GraphicsTests(unittest.TestCase):
                     # Ground truth comes from the analytic artwork, not from
                     # the renderer or reference's compositing implementation.
                     expected=pixels.copy()
-                    if not hidden:expected[:,:8]=[level,0,0];expected[:,8:10]=[0,level,0]
+                    if not hidden:
+                        # Bold+italic now transforms the full colour glyph.
+                        # Analytic ink is red x0..7, green x8..9; right dilation
+                        # and row shear transport the rightmost covered source.
+                        for y in range(16):
+                            num=(27*16-40*y-20)*8
+                            shift=((abs(num)+640)//1280)*(1 if num>=0 else -1)
+                            for x in range(16):
+                                sources=[sx for sx in (x-shift-1,x-shift) if 0<=sx<10]
+                                if sources:expected[y,x]=[level,0,0] if max(sources)<8 else [0,level,0]
                     np.testing.assert_array_equal(frame[32:48,:16],expected)
                     doc=dict(cols=20,rows=18,screen=[160,288],cell_width=8,cell_height=16,
                         records=json.loads(json.dumps(records)),emoji=emoji.identity,planes=graphics.records)
