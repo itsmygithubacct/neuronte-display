@@ -19,7 +19,7 @@ else:
     from reference_colour import reference_colour
 
 
-def reconstruct(document, weights, library, video_weights=None, emoji_weights=None, emoji_manifest=None, icon_weights=None, icon_manifest=None):
+def reconstruct(document, weights, library, video_weights=None, emoji_weights=None, emoji_manifest=None, icon_weights=None, icon_manifest=None, pointer_weights=None, pointer_manifest=None):
     lib=C.CDLL(str(library))
     lib.neuronte_open_file.argtypes=[C.c_char_p,C.POINTER(C.c_void_p)]
     lib.neuronte_close.argtypes=[C.c_void_p]
@@ -28,6 +28,7 @@ def reconstruct(document, weights, library, video_weights=None, emoji_weights=No
         lib.neuronte_coverage_styled.argtypes=lib.neuronte_coverage.argtypes[:-1]+[C.c_uint,C.POINTER(C.c_float)]
     handle=C.c_void_p()
     video=C.c_void_p()
+    pointer_handle=C.c_void_p()
     artworks=[]
     icon_handle=None
     icon_inventory=None
@@ -191,7 +192,36 @@ def reconstruct(document, weights, library, video_weights=None, emoji_weights=No
         if document.get('pointer'):
             px,py=document['pointer']
             if 0<=px<width and 0<=py<height:
-                if icon_handle:
+                if document.get('pointer_model'):
+                    identity=document['pointer_model']
+                    if pointer_weights is None or pointer_manifest is None:
+                        raise ValueError('reference requires the selected dedicated pointer model and manifest')
+                    for key,path in (('weights',pointer_weights),('manifest',pointer_manifest)):
+                        if hashlib.sha256(Path(path).read_bytes()).hexdigest()!=identity[key]:
+                            raise ValueError('reference pointer asset hash differs')
+                    spec=json.loads(Path(pointer_manifest).read_text())
+                    sizes=[s for s in spec['sizes'] if (s['width'],s['height'])==(cw,ch)]
+                    if (spec['format']!='neuronte-pointer-manifest' or spec['version']!=1 or
+                        spec['scalar']!=0x100001 or identity['scalar']!=0x100001 or len(sizes)!=1 or
+                        spec['model_sha256']!=identity['weights'] or spec['crop'] is not None or
+                        spec['other_scalars']!='unsupported' or sizes[0]['hotspot']!=identity['hotspot'] or
+                        sizes[0]['supersampling']!=identity['supersampling'] or
+                        (identity['width'],identity['height'])!=(cw,ch)):
+                        raise ValueError('reference dedicated pointer identity differs')
+                    if lib.neuronte_open_file(str(pointer_weights).encode(),C.byref(pointer_handle)):
+                        raise ValueError('cannot open reference pointer model')
+                    lib.neuronte_set_samples(pointer_handle,sizes[0]['supersampling'])
+                    lib.neuronte_set_theme(pointer_handle,0)
+                    hx,hy=sizes[0]['hotspot'];x,y=px-hx,py-hy
+                    x0,y0,x1,y1=max(0,x),max(0,y),min(width,x+cw),min(height,y+ch)
+                    packed=np.full((ch,cw),0xff000000,np.uint32)
+                    for channel,shift in enumerate((16,8,0)):
+                        packed[y0-y:y1-y,x0-x:x1-x]|=frame[y0:y1,x0:x1,channel].astype(np.uint32)<<shift
+                    if lib.neuronte_draw_scalar(pointer_handle,packed.ctypes.data,cw,cw,ch,0,0,cw,ch,0x100001,0xffffffff):
+                        raise ValueError('reference dedicated pointer draw failed')
+                    painted=np.stack([packed>>s&255 for s in (16,8,0)],axis=2).astype(np.uint8)
+                    frame[y0:y1,x0:x1]=painted[y0-y:y1-y,x0-x:x1-x]
+                elif icon_handle:
                     spec=icon_inventory['pointer'];cp=int(spec['scalar'][2:],16)
                     hx,hy=[size*n//d for size,n,d in zip((cw,ch),spec['hotspot_numerator'],spec['hotspot_denominator'])]
                     expected=dict(scalar=cp,hotspot=[hx,hy],contrast='per-pixel-luma-127.5')
@@ -218,6 +248,7 @@ def reconstruct(document, weights, library, video_weights=None, emoji_weights=No
     finally:
         lib.neuronte_close(handle)
         if video: lib.neuronte_close(video)
+        if pointer_handle: lib.neuronte_close(pointer_handle)
         for art in artworks:lib.neuronte_close(art)
 
 
@@ -238,12 +269,13 @@ def main():
     p.add_argument('--video-weights',type=Path); p.add_argument('--output',type=Path)
     p.add_argument('--emoji-weights',type=Path); p.add_argument('--emoji-manifest',type=Path)
     p.add_argument('--icon-weights',type=Path); p.add_argument('--icon-manifest',type=Path)
+    p.add_argument('--pointer-weights',type=Path); p.add_argument('--pointer-manifest',type=Path)
     args=p.parse_args()
     doc=json.loads(args.grid.read_text())
     for field,path in (('weights',args.weights),('library',args.library)):
         if hashlib.sha256(path.read_bytes()).hexdigest()!=doc['cache_identity'][field]:
             raise ValueError('reference asset hash differs: '+field)
-    expected=reconstruct(doc,args.weights,args.library,args.video_weights,args.emoji_weights,args.emoji_manifest,args.icon_weights,args.icon_manifest)
+    expected=reconstruct(doc,args.weights,args.library,args.video_weights,args.emoji_weights,args.emoji_manifest,args.icon_weights,args.icon_manifest,args.pointer_weights,args.pointer_manifest)
     actual=read_ppm(args.screenshot)
     if expected.shape!=actual.shape: raise ValueError('screenshot geometry differs')
     delta=np.abs(expected.astype(int)-actual.astype(int))

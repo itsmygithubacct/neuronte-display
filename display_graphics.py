@@ -113,7 +113,56 @@ def cursor_overlay(frame, cursor, records, cols, cache):
     return frame
 
 
-def pointer(frame, position, cache, scalar=0x2196, icons=None):
+def pointer_bounds(shape, position, cache, icons=None, model=None):
+    """Clipped artwork bounds; the input position always remains the hotspot."""
+    if position is None:
+        return None
+    h, w = shape[:2]
+    x, y = position
+    if not 0 <= x < w or not 0 <= y < h:
+        return None
+    asset = model or icons or cache
+    if model is not None or icons is not None:
+        x -= asset.hotspot[0]
+        y -= asset.hotspot[1]
+    return max(0, x), max(0, y), min(w, x+asset.cw), min(h, y+asset.ch)
+
+
+class PointerFrame:
+    """Retain the composed scene, including graphics and the text cursor.
+
+    Only old/new pointer rectangles are touched between content updates.
+    Damage uses exclusive right/bottom coordinates for the KMS converter.
+    """
+    def __init__(self, cache, icons=None, model=None):
+        self.cache, self.icons = cache, icons
+        self.model = model
+        self.background = self.frame = None
+        self.bounds = self.position = None
+
+    def replace(self, background):
+        self.background = background
+        self.frame = background.copy()
+        self.bounds = self.position = None
+
+    def move(self, position):
+        damage = []
+        if self.bounds:
+            x0, y0, x1, y1 = self.bounds
+            self.frame[y0:y1, x0:x1] = self.background[y0:y1, x0:x1]
+            damage.append(self.bounds)
+        self.bounds = pointer_bounds(self.frame.shape, position, self.cache, self.icons, self.model)
+        self.position = position
+        if self.bounds:
+            pointer(self.frame, position, self.cache, icons=self.icons, model=self.model)
+            if self.bounds not in damage:
+                damage.append(self.bounds)
+        return damage
+
+
+def pointer(frame, position, cache, scalar=0x2196, icons=None, model=None):
+    if model is not None:
+        return model.paint(frame, position)
     if position is None:
         return frame
     x,y=position

@@ -9,6 +9,10 @@ set -- "$@" --weights "${NEURONTE_WEIGHTS:-$NEURONTE_PREFIX/weights/$selected_we
 if [ -n "${NEURONTE_MODE:-}" ]; then set -- "$@" --mode "$NEURONTE_MODE"; fi
 if [ -n "${NEURONTE_SNAPSHOT:-}" ]; then set -- "$@" --snapshot "$NEURONTE_SNAPSHOT" --snapshot-live; fi
 if [ -n "${NEURONTE_HISTORY:-}" ]; then set -- "$@" --snapshot-history "$NEURONTE_HISTORY"; fi
+if [ -n "${NEURONTE_POINTER_TELEMETRY:-}" ]; then set -- "$@" --pointer-telemetry "$NEURONTE_POINTER_TELEMETRY"; fi
+if [ -n "${NEURONTE_POINTER_WEIGHTS:-}" ]; then
+    set -- "$@" --pointer-weights "$NEURONTE_POINTER_WEIGHTS" --pointer-manifest "${NEURONTE_POINTER_MANIFEST:?pointer manifest required}"
+fi
 if [ -n "${NEURONTE_EMOJI_WEIGHTS:-}" ]; then
     set -- "$@" --emoji-weights "$NEURONTE_EMOJI_WEIGHTS" --emoji-manifest "${NEURONTE_EMOJI_MANIFEST:?emoji manifest required}"
 fi

@@ -7,8 +7,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from display_pointer import validate_manifest
 
 
 def locked_emoji(home,entry):
@@ -59,6 +63,16 @@ def locked_icons(home,entry,manifest_path):
     return {'weights/'+entry['weights']:blobs['weights'],'weights/'+entry['manifest']:raw}
 
 
+def selected_pointer(weights, manifest):
+    """Only an explicitly supplied, hash-validated pair enters the payload."""
+    data, raw = Path(weights).read_bytes(), Path(manifest).read_bytes()
+    doc = validate_manifest(data, raw)
+    # Stable names cannot overwrite another entry in the existing closure.
+    if doc['model'] != 'weights/neuronte-pointer-v0.nrt':
+        raise ValueError('pointer package model path must be weights/neuronte-pointer-v0.nrt')
+    return {doc['model']: data, 'weights/neuronte-pointer-v0.manifest.json': raw}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--neuronte-home',type=Path,required=True)
@@ -68,8 +82,12 @@ def main():
     parser.add_argument('--emoji-home',type=Path,help='repository containing the immutable accepted emoji pair in deps.lock.json')
     parser.add_argument('--icon-home',type=Path,help='repository containing the pinned accepted icon weights and labelled metadata')
     parser.add_argument('--weights',type=Path,help='approved text bundle matching deps.lock.json')
+    parser.add_argument('--pointer-weights',type=Path,help='optional dedicated pointer model; requires its manifest')
+    parser.add_argument('--pointer-manifest',type=Path,help='hash-bound pointer manifest to include alongside the model')
     args=parser.parse_args()
     if args.output.exists(): parser.error('output exists; choose a new artifact path')
+    if bool(args.pointer_weights)!=bool(args.pointer_manifest):
+        parser.error('--pointer-weights and --pointer-manifest must be supplied together')
     root=Path(__file__).resolve().parents[1]
     closure=json.loads((root/'deps.lock.json').read_text())
     emoji=closure['neuronte'].get('emoji')
@@ -99,10 +117,11 @@ def main():
         raise ValueError('video weights differ from lock')
     if emoji:video.update(locked_emoji(args.emoji_home,emoji))
     if icons:video.update(locked_icons(args.icon_home,icons,root/'icons.json'))
+    if args.pointer_weights:video.update(selected_pointer(args.pointer_weights,args.pointer_manifest))
     args.output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
         staging=Path(directory)/'neuronte-display'
-        files={name:root/name for name in ('neuronte_display.py','display_io.py','display_graphics.py','display_emoji.py','display_icons.py','display_art.py','display_colour.py','COLOUR.md','display_graphemes.py','graphemes.json','GRAPHEMES.md','cell_desktop.py','LICENSE','README.md','deps.lock.json','Makefile','native.c','kms.c','tools/build_parser.py','tools/package.py','build/libneuronte-display.so','build/libneuronte-kms.so')}
+        files={name:root/name for name in ('neuronte_display.py','display_io.py','display_graphics.py','display_emoji.py','display_icons.py','display_pointer.py','display_art.py','display_colour.py','COLOUR.md','display_graphemes.py','graphemes.json','GRAPHEMES.md','cell_desktop.py','LICENSE','README.md','deps.lock.json','Makefile','native.c','kms.c','tools/build_parser.py','tools/package.py','build/libneuronte-display.so','build/libneuronte-kms.so')}
         files.update({str(p.relative_to(root)):p for p in (root/'provision').iterdir() if p.is_file()})
         files.update({str(p.relative_to(root)):p for p in (root/'vendor/ghostty').rglob('*') if p.is_file()})
         files.update({'build/libghostty-vt.so.0':args.ghostty/'lib/libghostty-vt.so.0',

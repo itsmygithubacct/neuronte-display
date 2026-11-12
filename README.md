@@ -66,6 +66,53 @@ Mouse input uses the parser's negotiated terminal protocol. The default pointer 
 selects the accepted U+E0B2 triangle with an aligned hotspot and contrasting
 foreground over light/dark pixels; legacy application defaults are unchanged.
 
+An optional dedicated NW arrow uses `--pointer-weights MODEL.nrt` and
+`--pointer-manifest MANIFEST.json`. Its separate model is invoked only for
+U+100001 and never enters terminal glyph selection. The manifest binds the
+model hash, fixed black/white palette, accepted cell sizes, supersampling and
+hotspots. The accepted v0 sizes are 16x32 (2 samples, hotspot 1,1) and 32x64
+(1 sample, hotspot 3,3). Unsupported sizes or mismatched assets fail at startup;
+omitting both flags keeps the icon/symbol pointer. The session wrapper accepts
+`NEURONTE_POINTER_WEIGHTS` and `NEURONTE_POINTER_MANIFEST`. The optional assets
+can be included with `tools/package.py --pointer-weights MODEL.nrt
+--pointer-manifest MANIFEST.json`. Both explicit arguments are required; the
+pair is hash validated and included in the package's file manifest. Omitting
+them leaves the default package assets and model selection intact.
+
+Pointer-only updates retain the composed scene, including image planes,
+colours and the text cursor. They restore the old artwork rectangle and paint
+the new one. KMS converts those rectangles plus the preceding flip's damage
+in the other scanout buffer. A new scene or VT acquisition invalidates both
+buffers; each is fully refreshed before small updates resume. Full-screen
+scanout and synchronous pageflip pacing remain. The Kitty backend still sends
+a complete frame through its existing presentation API.
+
+Evdev processing reads at most 256 raw events and dispatches at most 256
+logical events per device per poll. Consecutive complete motion reports may
+coalesce; button and wheel transitions form barriers and retain their order
+and final SYN coordinates. Large wheel counts continue on later polls. Primary
+and side buttons and vertical/horizontal wheel notches are supported; high
+resolution wheel companion events are ignored to avoid duplicate notches.
+VT release cancels held buttons, and reacquisition discards stale input with
+bounded reads before refreshing tablet coordinates. SYN_DROPPED cancels held
+buttons and records a discontinuity when telemetry is enabled.
+
+`--pointer-telemetry NEW.jsonl` (KMS only), or
+`NEURONTE_POINTER_TELEMETRY`, enables optional 64 KiB buffered JSONL with schema
+`neuronte.pointer.v1`. The file must not already exist. `pointer_input` records
+have sequence, physical pixel coordinates, action/button, `input_ns`, and a
+`dispatched` flag that identifies superseded motion. `present` records link
+the last dispatched sequence to requested and successfully presented positions,
+frame kind, `render_start_ns`, `submit_ns`, and `pageflip_ns`. All timestamps
+use the local monotonic clock: input starts at userspace read completion,
+submission precedes the DRM ioctl, and completion is observed in the DRM
+callback. Kernel input queue time, optical latency and refresh scanout position
+are outside these boundaries. Inactive or interrupted presentations have no
+success coordinates or completion timestamp. VT transitions reset correlation.
+An interrupted observation does not cancel an already queued DRM flip; that
+flip may still complete. Such records must not be treated as proof that the
+requested coordinates were never displayed.
+
 Masks are sampled twice per axis, rounded to eight bits and cached by scalar,
 style, weights/library hashes and geometry. Persistent entries have checksums
 and atomic replacement. The current `neuronte_coverage_styled` API implements
@@ -202,6 +249,14 @@ inference. `tools/boot_capture.py` samples power-on at a nominal 100 ms interval
 records actual timing, and classifies every distinct frame against independently
 reconstructed grid history or black. `--snapshot`, `--snapshot-live` and
 `--snapshot-history` provide atomic PPM/grid pairs and presented-frame history.
+Live snapshots intentionally retain full PPM/JSON/hash/history work for every
+successful frame, including pointer motion. Disable them for production-path
+timing; enable telemetry independently when software latency is needed. Report
+snapshot and telemetry modes separately because both add measurement overhead.
+Snapshot pointer coordinates describe the composed frame that was presented,
+even if newer input arrived before shutdown. Dedicated pointer snapshots carry
+their model identity; the independent reference tool accepts the same optional
+pointer weights and manifest to verify their pixels.
 
 Acceptance must separately report empty font inventory, no other renderer,
 unknown-scalar routing, full application/resize checks, boot frames, recovery and

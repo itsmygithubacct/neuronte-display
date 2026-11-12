@@ -22,10 +22,11 @@ import unicodedata
 from display_graphemes import Graphemes, IDENTITY as GRAPHEME_IDENTITY
 
 import numpy as np
-from display_io import KMS, OuterInput, EvdevPointer
-from display_graphics import Graphics, pointer, cursor_overlay
+from display_io import KMS, OuterInput, EvdevPointer, PointerTelemetry
+from display_graphics import Graphics, pointer, cursor_overlay, PointerFrame
 from display_emoji import Emoji
 from display_icons import Icons
+from display_pointer import PointerModel
 
 HERE = Path(__file__).resolve().parent
 FG, BG = 0xDCE2EB, 0x13171E
@@ -361,6 +362,34 @@ class Renderer:
         return self.frame
 
 
+class FrameComposer:
+    """Scene invalidation is independent of pointer motion and scanout."""
+    def __init__(self, renderer, graphics=None, pointer_model=None):
+        self.renderer, self.graphics = renderer, graphics
+        self.pointer = PointerFrame(renderer.cache, renderer.icons, pointer_model)
+        self.records = None
+        self.valid = False
+
+    def compose(self, workspace):
+        full = not self.valid or workspace.content_dirty
+        if full:
+            self.records = workspace.grid()
+            background = self.renderer.render(self.records, workspace.cols, workspace.rows).copy()
+            if self.graphics:
+                workspace.text_ink = self.renderer.ink(self.records, workspace.cols, workspace.rows)
+                self.graphics.composite(background, workspace)
+            self.renderer.cursor(background, workspace.cursor, self.records, workspace.cols)
+            self.pointer.replace(background)
+        start = time.perf_counter()
+        damage = self.pointer.move(workspace.pointer)
+        self.renderer.last['frame_kind'] = 'full' if full else 'pointer'
+        if not full:
+            self.renderer.last.update(seconds=time.perf_counter()-start, changed_cells=0)
+        workspace.content_dirty = False
+        self.valid = True
+        return self.pointer.frame, self.records, None if full else damage
+
+
 class Pane:
     def __init__(self, command, cols, rows, cw, ch, lib):
         self.terminal = Terminal(cols, rows, lib)
@@ -468,6 +497,7 @@ class Workspace:
         self.tabs, self.tab, self.focus, self.prefix = [], 0, 0, False
         self.quit = False
         self.pointer = None
+        self.content_dirty = True
         self.new_tab()
 
     @property
@@ -482,12 +512,14 @@ class Workspace:
         return [pane for tab in self.tabs for pane in tab["panes"]]
 
     def new_tab(self):
+        self.content_dirty = True
         pane = Pane(self.command, self.cols, max(1, self.rows - 3), self.cw, self.ch, self.lib)
         self.tabs.append({"panes": [pane], "vertical": True, "bias": 0})
         self.tab, self.focus = len(self.tabs) - 1, 0
         self.layout()
 
     def split(self, vertical=True):
+        self.content_dirty = True
         if len(self.current["panes"]) >= 4:
             return
         self.current["vertical"] = vertical
@@ -497,6 +529,10 @@ class Workspace:
 
     def layout(self, tab=None):
         tab = self.current if tab is None else tab
+        key = (id(tab), self.cols, self.rows, tab['vertical'], tab['bias'],
+               tuple(id(pane) for pane in tab['panes']))
+        if getattr(self, '_layout_key', None) == key:
+            return self._rectangles
         count = len(tab["panes"])
         vertical = tab["vertical"]
         length = self.cols if vertical else self.rows - 2
@@ -514,16 +550,20 @@ class Workspace:
             pane.resize(w, h - 1)
             rectangles.append((x, y, w, h))
             offset += size + 1
+        self._layout_key, self._rectangles = key, rectangles
         return rectangles
 
     def resize(self, cols, rows):
         if not 20 <= cols <= 240 or not 18 <= rows <= 120:
             raise ValueError("Display geometry must be 20..240 columns and 18..120 rows")
         self.cols, self.rows = cols, rows
+        self.content_dirty = True
         for tab in self.tabs:
             self.layout(tab)
 
     def input(self, data):
+        if data:
+            self.content_dirty = True
         for byte in data:
             if self.quit:
                 break
@@ -568,12 +608,14 @@ class Workspace:
             for i, tab in enumerate(self.tabs):
                 end = start + len(f" [1:{tab['panes'][0].name}] ")
                 if start <= col < end:
+                    if (self.tab, self.focus) != (i, 0): self.content_dirty = True
                     self.tab, self.focus = i, 0
                     return
                 start = end
         for i, (pane, (px,py,w,h)) in enumerate(zip(self.current["panes"], self.layout())):
             if px <= col < px+w and py <= row < py+h:
                 if action == 0 and button == 1:
+                    if self.focus != i: self.content_dirty = True
                     self.focus = i
                 if row > py:
                     pane.send(pane.terminal.mouse(action, button, x-px*self.cw, y-(py+1)*self.ch, mods))
@@ -583,7 +625,9 @@ class Workspace:
         owners = {pane.fd: pane for pane in self.panes() if pane.fd is not None}
         readable = list(owners) + ([0] if keyboard and active else []) + (list(pointer_input.devices) if pointer_input else [])
         writable = [fd for fd, pane in owners.items() if pane.pending]
-        ready, writes, _ = select.select(readable, writable, [], timeout)
+        queued = pointer_input.ready_fds if pointer_input and active else set()
+        ready, writes, _ = select.select(readable, writable, [], 0 if queued else timeout)
+        ready += sorted(queued.difference(ready))
         changed = False
         for fd in ready:
             if pointer_input and fd in pointer_input.devices:
@@ -596,12 +640,17 @@ class Workspace:
                     (input_handler or self.input)(data)
                 changed = True
             elif owners[fd].fd is not None:
-                changed = owners[fd].read() or changed
+                content = owners[fd].read()
+                if content: self.content_dirty = True
+                changed = content or changed
         for fd in writes:
             if owners[fd].fd is not None:
                 owners[fd].flush()
         for pane in self.panes():
+            previous_status = pane.exit_status
             pane.reap()
+            if previous_status != pane.exit_status:
+                self.content_dirty = changed = True
         return changed
 
     def grid(self):
@@ -646,7 +695,7 @@ class Workspace:
             pane.close()
 
 
-def save_snapshot(path, frame, records, workspace, cache, timing, graphics=None, screen=None, emoji=None, history=None, icons=None):
+def save_snapshot(path, frame, records, workspace, cache, timing, graphics=None, screen=None, emoji=None, history=None, icons=None, pointer_model=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width, _ = frame.shape
@@ -658,10 +707,11 @@ def save_snapshot(path, frame, records, workspace, cache, timing, graphics=None,
         "version": 2, "cols": workspace.cols, "rows": workspace.rows,
         "cell_width": cache.cw, "cell_height": cache.ch, "cache_identity": cache.identity,
         "records": records, "timing": timing, "cache": dict(cache.stats),
-        "pointer": workspace.pointer, "planes": graphics.records if graphics else [],
+        "pointer": getattr(workspace, 'presented_pointer', workspace.pointer), "planes": graphics.records if graphics else [],
         "cursor": getattr(workspace, 'cursor', None),
         "emoji": emoji.identity if emoji else None,
         "icons": icons.identity if icons else None,
+        "pointer_model": pointer_model.identity if pointer_model else None,
         "graphemes": GRAPHEME_IDENTITY,
         "screen": screen or [width,height], "frame_sha256":hashlib.sha256(raw).hexdigest(),
         "rgb_sha256":hashlib.sha256(frame.tobytes()).hexdigest()}
@@ -672,6 +722,22 @@ def save_snapshot(path, frame, records, workspace, cache, timing, graphics=None,
         history=Path(history); history.mkdir(parents=True,exist_ok=True)
         target=history/(document['rgb_sha256']+'.json')
         if not target.exists(): target.write_text(json.dumps(document)+'\n')
+
+
+def process_vt_transitions(transitions, kms, pointer_input, composer, telemetry=None):
+    """Defer an interrupted acquire, or let a newer release supersede it."""
+    while transitions:
+        acquire = transitions.pop(0)
+        composer.valid = False
+        if pointer_input and not acquire: pointer_input.leave()
+        if not kms.vt(acquire):
+            if not transitions: transitions.append(acquire)
+            return False
+        if pointer_input and acquire: pointer_input.resume()
+        if telemetry: telemetry.vt(acquire)
+        print(json.dumps({'event':'vt-acquire' if acquire else 'vt-release',
+                          'monotonic':time.monotonic()}), file=sys.stderr, flush=True)
+    return True
 
 
 def main():
@@ -691,6 +757,9 @@ def main():
     parser.add_argument("--drm-card", default="/dev/dri/card0")
     parser.add_argument("--mode", help="KMS WIDTHxHEIGHT; default connected preferred mode")
     parser.add_argument("--pointer-device", action="append", default=[], help="evdev pointer device, repeatable")
+    parser.add_argument("--pointer-telemetry", type=Path, help="exclusive buffered KMS input/pageflip JSONL; no screen dumps")
+    parser.add_argument("--pointer-weights", type=Path, help="opt-in dedicated learned pointer model")
+    parser.add_argument("--pointer-manifest", type=Path, help="hash-bound pointer sizes, samples, scalar and hotspots")
     parser.add_argument("--video-home", type=Path, help="Neuronte tree containing tools/neuronte_video.py")
     parser.add_argument("--video-weights", type=Path)
     parser.add_argument("--emoji-weights", type=Path, help="explicit standalone two-cell colour bundle")
@@ -705,10 +774,14 @@ def main():
         parser.error('--emoji-weights and --emoji-manifest must be supplied together')
     if bool(args.icon_weights)!=bool(args.icon_manifest):
         parser.error('--icon-weights and --icon-manifest must be supplied together')
+    if bool(args.pointer_weights)!=bool(args.pointer_manifest):
+        parser.error('--pointer-weights and --pointer-manifest must be supplied together')
     if not 20 <= args.cols <= 240 or not 18 <= args.rows <= 120:
         parser.error("geometry must be 20..240 columns and 18..120 rows")
     if args.headless_seconds is not None and args.headless_seconds <= 0:
         parser.error("--headless-seconds must be positive")
+    if args.pointer_telemetry and args.backend != 'kms':
+        parser.error('--pointer-telemetry requires --backend kms')
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     cache = MaskCache(args.weights or args.home/"weights/neuronte-split-v4.nrt",
                       args.library or args.home/"build/libneuronte.so", args.cache,
@@ -722,10 +795,13 @@ def main():
     emoji = None
     icons = None
     outer = None
+    telemetry = None
+    pointer_model = None
     transitions = []
     old_signals = {}
     renderer = Renderer(cache)
     frame, records = None, None
+    frame_presented = False
     try:
         interactive = args.headless_seconds is None
         if args.backend == "kms" and not interactive:
@@ -748,11 +824,18 @@ def main():
         if args.icon_weights:
             icons=Icons(args.icon_weights,args.icon_manifest,args.library or args.home/'build/libneuronte.so',cache.cw,cache.ch,args.theme)
             renderer.icons=icons
+        if args.pointer_weights:
+            pointer_model=PointerModel(args.pointer_weights,args.pointer_manifest,
+                                       args.library or args.home/'build/libneuronte.so',cache.cw,cache.ch)
         workspace.resize(args.cols,args.rows)
         if args.video_home:
             graphics=Graphics(args.video_home,args.library or args.home/'build/libneuronte.so',args.video_weights)
+        if args.pointer_telemetry:
+            telemetry=PointerTelemetry(args.pointer_telemetry, bool(args.snapshot and args.snapshot_live),
+                                       bool(args.snapshot and args.snapshot_live and args.snapshot_history))
         if args.pointer_device:
-            pointer_input=EvdevPointer(args.pointer_device,workspace)
+            pointer_input=EvdevPointer(args.pointer_device,workspace,telemetry)
+        composer = FrameComposer(renderer, graphics, pointer_model)
         if interactive:
             if not os.isatty(0) or (not kms and not os.isatty(1)):
                 raise RuntimeError("Interactive presentation requires a terminal")
@@ -767,13 +850,10 @@ def main():
         deadline = time.monotonic() + (args.headless_seconds or float("inf"))
         dirty = True
         while not workspace.quit and time.monotonic() < deadline:
-            while transitions:
-                acquire=transitions.pop(0)
-                if pointer_input and not acquire: pointer_input.leave()
-                kms.vt(acquire)
-                if pointer_input and acquire: pointer_input.resume()
-                print(json.dumps({'event':'vt-acquire' if acquire else 'vt-release','monotonic':time.monotonic()}),file=sys.stderr,flush=True)
+            if transitions:
                 dirty=True
+                if not process_vt_transitions(transitions,kms,pointer_input,composer,telemetry):
+                    continue
             if presenter:
                 width,height=C.c_int(),C.c_int()
                 workspace.lib.nd_presenter_size(presenter,C.byref(width),C.byref(height))
@@ -784,32 +864,43 @@ def main():
                 if (cols,rows)!=(workspace.cols,workspace.rows):
                     workspace.resize(cols,rows)
                     dirty=True
-            if dirty:
-                records = workspace.grid()
-                frame = renderer.render(records, workspace.cols, workspace.rows).copy()
-                if graphics:
-                    workspace.text_ink=renderer.ink(records,workspace.cols,workspace.rows)
-                    graphics.composite(frame,workspace)
-                renderer.cursor(frame,workspace.cursor,records,workspace.cols)
-                pointer(frame,workspace.pointer,cache,icons=icons)
+            if dirty and (not kms or kms.active):
+                render_start_ns = time.monotonic_ns() if telemetry else None
+                frame, records, damage = composer.compose(workspace)
+                frame_presented = False
+                # Signals received during composition must be handled before
+                # submission; an interrupted native flip also returns here.
+                if transitions:
+                    composer.valid=False
+                    continue
                 if presenter:
                     rgba = np.concatenate((frame, np.full((*frame.shape[:2],1),255,np.uint8)), axis=2)
                     if workspace.lib.nd_present(presenter, rgba.ctypes.data, frame.shape[1], frame.shape[0]):
                         raise RuntimeError("Framebuffer presentation failed")
-                if kms: kms.present(frame)
+                completion = kms.present(frame,damage,timed=bool(telemetry)) if kms else {}
+                if telemetry:
+                    telemetry.present(composer.pointer.position,renderer.last['frame_kind'],render_start_ns,completion)
+                if completion is None:
+                    composer.valid=False
+                    dirty=True
+                    continue
+                frame_presented = True
+                workspace.presented_pointer = composer.pointer.position
                 renderer.last['presented_monotonic']=time.monotonic()
                 if args.snapshot and args.snapshot_live:
                     save_snapshot(args.snapshot,frame,records,workspace,cache,renderer.last,graphics,
-                                  [kms.width,kms.height] if kms else None,emoji,args.snapshot_history,icons)
-            dirty = workspace.poll(0.04, keyboard=interactive,input_handler=outer.feed if outer else None,
-                                   pointer_input=pointer_input,active=kms.active if kms else True)
-            if outer and not dirty:
+                                  [kms.width,kms.height] if kms else None,emoji,args.snapshot_history,icons,pointer_model)
+                dirty = False
+            changed = workspace.poll(0.04, keyboard=interactive,input_handler=outer.feed if outer else None,
+                                     pointer_input=pointer_input,active=kms.active if kms else True)
+            dirty = changed or dirty
+            if outer and not changed:
                 pending=bool(outer.pending)
                 outer.flush()
-                dirty=pending
-        if args.snapshot and frame is not None:
+                dirty=pending or dirty
+        if args.snapshot and frame_presented:
             save_snapshot(args.snapshot,frame,records,workspace,cache,renderer.last,graphics,
-                          [kms.width,kms.height] if kms else None,emoji,args.snapshot_history,icons)
+                          [kms.width,kms.height] if kms else None,emoji,args.snapshot_history,icons,pointer_model)
     finally:
         if outer:
             os.write(1,b'\x1b[?1003l\x1b[?1006l\x1b[?1016l')
@@ -817,12 +908,16 @@ def main():
             workspace.lib.nd_presenter_close(presenter)
         if pointer_input:
             pointer_input.close()
+        if telemetry:
+            telemetry.close()
         if kms:
             kms.close()
         if emoji:
             emoji.close()
         if icons:
             icons.close()
+        if pointer_model:
+            pointer_model.close()
         if saved_termios is not None:
             termios.tcsetattr(0, termios.TCSADRAIN, saved_termios)
         if workspace:
