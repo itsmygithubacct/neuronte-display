@@ -135,8 +135,12 @@ python3 tools/build_installer.py --source-iso "$DEBIAN_ISO" \
 ```
 
 The package includes the parser shared library, patches, rebuild recipe, pinned
-video source read from Git objects, nets, licenses and SHA256 manifest. Optional
-`--emoji-weights` and `--emoji-manifest` package both assets without enabling them.
+video source read from Git objects, nets, licenses and SHA256 manifest. When an
+accepted emoji pair is pinned in the lock, `--emoji-home "$TRAINING_SOURCE"` is
+required and exports both assets from that immutable revision. Their hashes and
+300-scalar inventory are checked; runtime selection stays optional. The final
+`tools/accept_emoji.py --installed-assets` gate verifies and uses those installed
+files without uploading weights or a manifest into the guest.
 The session selects the locked text bundle; `NEURONTE_WEIGHTS` can explicitly
 select a preserved baseline. Runtime dependencies are in `provision/dependencies.json`. No mutable host parser
 installation is needed by an installed payload.

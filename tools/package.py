@@ -4,10 +4,31 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+
+
+def locked_emoji(home,entry):
+    """Read the approved pair from one immutable revision, including its inventory."""
+    if not re.fullmatch(r'[0-9a-f]{40}',entry['revision']):
+        raise ValueError('emoji revision must be a full immutable Git commit')
+    result={}
+    for kind in ('weights','manifest'):
+        name=entry[kind]
+        if Path(name).name!=name:raise ValueError('emoji package name must be a basename')
+        data=subprocess.check_output(['git','-C',str(home),'show',entry['revision']+':'+entry[kind+'_source']])
+        if hashlib.sha256(data).hexdigest()!=entry[kind+'_sha256']:
+            raise ValueError('emoji '+kind+' differs from lock')
+        result['weights/'+name]=data
+    manifest=json.loads(result['weights/'+entry['manifest']])
+    scalars=[int(row['scalar'][2:],16) for row in manifest['glyphs']]
+    if (manifest.get('version')!=1 or manifest.get('cell_columns')!=2 or len(scalars)!=300
+        or len(set(scalars))!=300 or any(cp>0xeffff or cp<0 or 0xd800<=cp<=0xdfff for cp in scalars)):
+        raise ValueError('approved emoji manifest must contain exactly300 unique two-cell scalars')
+    return result
 
 
 def main():
@@ -16,15 +37,15 @@ def main():
     parser.add_argument('--video-home',type=Path,required=True)
     parser.add_argument('--ghostty',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--emoji-weights',type=Path)
-    parser.add_argument('--emoji-manifest',type=Path)
+    parser.add_argument('--emoji-home',type=Path,help='repository containing the immutable accepted emoji pair in deps.lock.json')
     parser.add_argument('--weights',type=Path,help='approved text bundle matching deps.lock.json')
     args=parser.parse_args()
-    if bool(args.emoji_weights)!=bool(args.emoji_manifest):
-        parser.error('emoji weights and manifest must be supplied together')
     if args.output.exists(): parser.error('output exists; choose a new artifact path')
     root=Path(__file__).resolve().parents[1]
     closure=json.loads((root/'deps.lock.json').read_text())
+    emoji=closure['neuronte'].get('emoji')
+    if bool(emoji)!=bool(args.emoji_home):
+        parser.error('an accepted emoji lock and --emoji-home must be supplied together')
     lock=closure['ghostty-vt']
     if (args.ghostty/'revision').read_text().strip()!=lock['revision']:
         raise ValueError('parser revision differs from the lock')
@@ -44,6 +65,7 @@ def main():
         video['weights/'+name]=data
     if hashlib.sha256(video['weights/'+net['video_weights']]).hexdigest()!=net['video_weights_sha256']:
         raise ValueError('video weights differ from lock')
+    if emoji:video.update(locked_emoji(args.emoji_home,emoji))
     args.output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
         staging=Path(directory)/'neuronte-display'
@@ -56,8 +78,6 @@ def main():
                       'provenance/ghostty-patches.sha256':args.ghostty/'patches.sha256',
                       'build/libneuronte.so':args.neuronte_home/'build/libneuronte.so',
                       'licenses/neuronte.txt':args.neuronte_home/'LICENSE'})
-        if args.emoji_weights:
-            files.update({'weights/emoji.nrt':args.emoji_weights,'weights/emoji-manifest.json':args.emoji_manifest})
         manifest={}
         for name in sorted(set(files)|set(video)):
             target=staging/name

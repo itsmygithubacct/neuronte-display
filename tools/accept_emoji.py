@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import time
 import numpy as np
@@ -19,6 +20,7 @@ def main():
     p.add_argument('--manifest',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
     p.add_argument('--analytic-fixture',action='store_true',help='explicit single-scalar analytic test, not real300 acceptance')
     p.add_argument('--analytic-negative',action='store_true',help='known red/green half fixture with a blue image behind it')
+    p.add_argument('--installed-assets',action='store_true',help='require the locked pair already installed under /opt/neuronte-display; upload no assets')
     p.add_argument('--timeout',type=float,default=120,help='maximum seconds for each cold-render wait')
     args=p.parse_args();args.output.mkdir(parents=True,exist_ok=True)
     if args.timeout<=0:p.error('--timeout must be positive')
@@ -32,6 +34,24 @@ def main():
     assert len(scalars)==(1 if analytic else 300),'real acceptance requires exactly300 manifest scalars'
     assert len(set(scalars))==len(scalars),'manifest scalars must be unique'
     weight_hash=hashlib.sha256(args.weights.read_bytes()).hexdigest()
+    manifest_hash=hashlib.sha256(args.manifest.read_bytes()).hexdigest()
+    guest_weights='/tmp/neuronte-colour.nrt';guest_manifest='/tmp/neuronte-colour.json'
+    if args.installed_assets:
+        if analytic:p.error('--installed-assets requires the accepted real300 bundle')
+        local_lock=json.loads((args.runtime/'deps.lock.json').read_text())['neuronte']['emoji']
+        guest_lock=json.loads(ssh('cat /opt/neuronte-display/deps.lock.json'))['neuronte']['emoji']
+        assert local_lock==guest_lock,'installed emoji lock differs from reference payload'
+        assert local_lock['weights_sha256']==weight_hash and local_lock['manifest_sha256']==manifest_hash
+        guest_payload=json.loads(ssh('cat /opt/neuronte-display/manifest.json'))
+        asset_proof=[]
+        for kind in ('weights','manifest'):
+            relative='weights/'+local_lock[kind];path='/opt/neuronte-display/'+relative
+            digest=ssh('sha256sum -- '+shlex.quote(path)).decode().split()[0]
+            assert digest==local_lock[kind+'_sha256']==guest_payload[relative]
+            asset_proof.append(dict(kind=kind,path=path,sha256=digest))
+        guest_weights='/opt/neuronte-display/weights/'+local_lock['weights']
+        guest_manifest='/opt/neuronte-display/weights/'+local_lock['manifest']
+        (args.output/'installed-assets.json').write_text(json.dumps(dict(lock=local_lock,assets=asset_proof),indent=2)+'\n')
     source="import sys\nsys.stdout.write('\\x1b[?2027h\\x1b[2J\\x1b[H\\x1b[?25lCOLOUR_EMOJI_ACCEPT\\r\\n')\n"
     # The application opts into grapheme width mode, then VS16 requests wide
     # presentation. Bare text-presentation scalars remain narrow by default.
@@ -43,11 +63,12 @@ def main():
         source+="import base64\nsys.stdout.write('\\x1b[2;1H\\x1b_Ga=T,f=24,s=16,v=16,z=-1,q=2;'+base64.b64encode(bytes([0,0,255])*256).decode()+'\\x1b\\\\');sys.stdout.flush()\n"
     q=QMP(args.qmp);results=[]
     try:
-        ssh('cat > /tmp/neuronte-colour.nrt',args.weights.read_bytes())
-        ssh('cat > /tmp/neuronte-colour.json',args.manifest.read_bytes())
+        if not args.installed_assets:
+            ssh('cat > /tmp/neuronte-colour.nrt',args.weights.read_bytes())
+            ssh('cat > /tmp/neuronte-colour.json',args.manifest.read_bytes())
         ssh('cat > /tmp/neuronte-colour.py',source.encode())
         for theme in ('dark','light'):
-            addition=('\nNEURONTE_EMOJI_WEIGHTS=/tmp/neuronte-colour.nrt\nNEURONTE_EMOJI_MANIFEST=/tmp/neuronte-colour.json\nNEURONTE_THEME='+theme+'\n').encode()
+            addition=('\nNEURONTE_EMOJI_WEIGHTS='+guest_weights+'\nNEURONTE_EMOJI_MANIFEST='+guest_manifest+'\nNEURONTE_THEME='+theme+'\n').encode()
             ssh('sudo tee /etc/default/neuronte-display >/dev/null',original+addition)
             before_restart=float(ssh("cut -d' ' -f1 /proc/uptime"))
             ssh('sudo systemctl restart neuronte-display')
@@ -103,7 +124,7 @@ def main():
                 observed_half_cells=len(half_cells),left_half_cells=sum(h['half']==0 for h in half_cells),
                 right_half_cells=sum(h['half']==1 for h in half_cells),grapheme_mode=2027,
                 pixels=actual.shape[0]*actual.shape[1],identity=doc['emoji'],analytic_fixture=analytic,
-                analytic_negative=args.analytic_negative)
+                analytic_negative=args.analytic_negative,installed_assets=args.installed_assets)
             (args.output/(theme+'-half-cells.json')).write_text(json.dumps(half_cells,indent=2)+'\n')
             results.append(result);print(json.dumps(result),flush=True)
             (args.output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
