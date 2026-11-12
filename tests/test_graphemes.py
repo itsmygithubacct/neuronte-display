@@ -37,11 +37,24 @@ class GraphemeGeometryTests(unittest.TestCase):
         np.testing.assert_array_equal(g.mask((88,769)),expected)
         expected=c.get(120).copy();expected[2,4]=255;expected[3,3]=255;expected[4,3]=255
         np.testing.assert_array_equal(g.mask((120,786)),expected)
+        expected=c.get(120).copy()
+        for y,x in ((2,7),(3,7),(4,6),(4,7),(5,6)):expected[y,x]=255
+        np.testing.assert_array_equal(g.mask((120,789)),expected)
         # Below comma is detached in the bottom band. The body is fitted to
         # the source baseline before union, so descenders cannot hide it.
         expected=np.zeros((16,8),np.uint8);expected[6:12,1]=255;expected[6:12,6]=255
         expected[13,4]=255;expected[14,4]=255;expected[15,3]=255
         np.testing.assert_array_equal(g.mask((120,806)),expected)
+
+    def test_known_pixels_above_below_and_two_above(self):
+        c=FixtureCache();c.values[168]=np.zeros((16,8),np.uint8)
+        c.values[168][2,2]=255;c.values[168][2,5]=255;g=Graphemes(c)
+        expected=np.zeros((16,8),np.uint8);expected[6:12,1]=255;expected[6:12,6]=255
+        for y,x in ((2,4),(3,3),(13,4),(14,4),(15,3)):expected[y,x]=255
+        np.testing.assert_array_equal(g.mask((120,769,806)),expected)
+        expected=np.zeros((16,8),np.uint8);expected[7:13,1]=255;expected[7:13,6]=255
+        for y,x in ((4,2),(4,5),(0,4),(1,3)):expected[y,x]=255
+        np.testing.assert_array_equal(g.mask((120,776,769)),expected)
 
     def test_styles_apply_to_complete_mask_and_never_wrap(self):
         c=FixtureCache();g=Graphemes(c);plain=np.maximum(c.get(120),c.get(180))
@@ -124,3 +137,33 @@ class GraphemeAssetTests(unittest.TestCase):
             elif not flags&(4|8|128):np.testing.assert_array_equal(ink[:,:8],renderer.graphemes.mask(cells[0][0],flags&3))
             doc=dict(records=cells,cols=2,rows=1,screen=[16,16],cell_width=8,cell_height=16,graphemes=IDENTITY)
             np.testing.assert_array_equal(frame,reconstruct(doc,self.weights,self.library))
+
+    def test_j_dot_isolation_requires_a_whole_pixel_source_gap(self):
+        # Independent boundaries from the source dot end6.05/body start7.25;
+        # no boundary exists at heights8/10/11, so the whole cluster falls back.
+        for h in (8,10,11):
+            c=self.cache(8,h);g=Graphemes(c)
+            for value in ((106,769),(106,769,776)):
+                np.testing.assert_array_equal(g.mask(value),c.get(0xfffd))
+                self.assertFalse(g.supported(value))
+        for h,cut in ((9,3),(12,4),(14,5),(16,5),(32,10)):
+            c=self.cache(8,h);g=Graphemes(c)
+            expected=c.get(106).copy();expected[:cut]=0
+            expected[:,1:]=np.maximum(expected[:,1:],c.get(180)[:,:-1])
+            np.testing.assert_array_equal(g.mask((106,769)),expected)
+            self.assertTrue(g.supported((106,769)))
+            reference=reference_composer(POLICY,c.identity['weights'],8,h,c.get)
+            np.testing.assert_array_equal(g.mask((106,769)),reference((106,769)))
+
+    def test_actual_below_anchors_on_descenders_and_baseline_edges(self):
+        c=self.cache();g=Graphemes(c)
+        # Source baseline15 maps to pixel boundary12. All these learned
+        # bodies extend past it, including the antialiased non-descender x.
+        for base,columns in (('q',(6,7)),('g',(3,4)),('j',(2,3)),('x',(3,4))):
+            with self.subTest(base=base):
+                self.assertTrue(np.any(c.get(ord(base))[12:]))
+                a=g.mask((ord(base),0x326))
+                self.assertFalse(np.any(a[12])) # one complete row separates body and comma
+                expected=np.zeros((3,8),bool);expected[:,columns]=True
+                np.testing.assert_array_equal(a[13:]!=0,expected)
+                self.assertTrue(np.any(a[:12]))

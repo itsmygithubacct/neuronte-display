@@ -65,7 +65,11 @@ def reference_composer(policy,digest,w,h,infer):
         has_above=counts['above']>0
         body_code=305 if base==105 and has_above else base
         body=infer(body_code,0).copy()
-        if base==106 and has_above:body[:h*7//20,:]=0
+        if base==106 and has_above:
+            separation=math.ceil(g['dotless_j_gap'][0]*h/20)
+            if separation>math.floor(g['dotless_j_gap'][1]*h/20):
+                raise ReferenceUnavailable('j cannot be isolated on this raster')
+            body[:separation,:]=0
         if not np.any(body):raise ReferenceUnavailable('empty base')
         left,top,right,bottom=rectangle(body)
         capital=chr(base).isupper()

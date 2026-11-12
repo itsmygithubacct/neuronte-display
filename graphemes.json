@@ -29,7 +29,7 @@
   "geometry": {
     "design": [10,20], "cap_top": 4, "x_height": 8, "baseline": 15,
     "short_top": 5.8, "capital_raise": 2.3, "pen_radius": 0.75,
-    "dotless_j_body_from": 7, "maximum_marks_per_anchor": 2,
+    "dotless_j_gap": [6.05,7.25], "maximum_marks_per_anchor": 2,
     "above_centres": {"0131": 5, "006A": 6.5, "004A": 6, "006C": 5},
     "caron_beside": {"0064": 8.9, "006C": 7.2, "0074": 6.6, "004C": 4.5},
     "cedilla_comma": "GKLNRknlr", "cedilla_turned": "g"

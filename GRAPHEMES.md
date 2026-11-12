@@ -60,14 +60,19 @@ source's explicit dotless-i, j, J and l centres. A capital's upper body is
 fitted down to the shortened top while retaining its baseline; a lowercase
 ascender is fitted only above the source x-height. Marks above capitals move
 up by2.3 source units. Above marks on i use the trained dotless i0131. On j,
-the learned j body is retained below source y7, the empty design gap between
-its dot (ending before6.1 including pen) and body (starting after7.2); no
-untrained dotless-j0237 is inferred.
+the cutoff is an integer pixel boundary inside the verified source gap
+y6.05..7.25 (including pen). If no boundary fits, dot and body may share a
+raster row, so this composition is unavailable: this affects heights8,10,11.
+At heights9,12,14,16,32 the cutoffs are respectively3,4,5,5,10 rows. No
+untrained dotless-j0237 is inferred, and the cutoff never retains a pixel
+overlapping the source dot merely to claim small-cell support.
 
 Below marks use the centre of the lowest learned body ink; ogonek uses its
 rightmost point. The body is fitted above the source baseline when needed,
 so a new below mark does not collide with a full descender. This is a synthetic
-fixed-cell fit: the original trained precomposed glyphs are unchanged. Beside
+fixed-cell fit based on learned ink bounds: it also fits baseline antialiasing
+that extends beyond that boundary on non-descenders such as x. The original
+trained precomposed glyphs are unchanged. Beside
 marks use source d/l/t/L anchors or x8.5 for other bases. Cedilla becomes a
 comma for G/K/L/N/R/k/n/l/r and a turned comma above for g, as in the original
 composition source.

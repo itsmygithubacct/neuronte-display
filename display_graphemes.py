@@ -124,7 +124,13 @@ class Graphemes:
         groups={a:[cp for cp in marks if MARKS[cp]['anchor']==a] for a in ('above','below','beside')}
         source_base=0x131 if base==ord('i') and groups['above'] else base
         body=get(source_base).copy()
-        if base==ord('j') and groups['above']:body[:h*7//20]=0 # source gap between the learned dot and body
+        if base==ord('j') and groups['above']:
+            # Keep only whole pixels separated by a boundary inside the source
+            # gap. If dot/body can share a pixel, extraction is unavailable.
+            dot_end,body_start=G['dotless_j_gap']
+            cut=int(np.ceil(dot_end*h/20))
+            if cut>int(np.floor(body_start*h/20)):raise Unavailable('j dot/body share a raster row')
+            body[:cut]=0
         if not np.any(body):raise Unavailable("empty base")
         bx0,by0,bx1,by1=bounds(body);capital=chr(base).isupper()
         if groups['below']:
