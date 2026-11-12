@@ -22,7 +22,16 @@
     "styled_api_revision": "5c4fec11bdd81a25b240d8e3abcd032bc58eefca",
     "video_revision": "4f01059f4fe6737f0d470bc51bb51b6a479d9cef",
     "video_weights": "neuronte-video-masks-v0.nrt",
-    "video_weights_sha256": "d81fb4099a2f333e654b2f57a85ff0c13d57ca3dc7d5a4a942bc350650e4707c"
+    "video_weights_sha256": "d81fb4099a2f333e654b2f57a85ff0c13d57ca3dc7d5a4a942bc350650e4707c",
+    "emoji": {
+      "revision": "c1a182d53ff4ecfc61e1b9c3f8b3c5d57a0505a3",
+      "weights": "neuronte-emoji-v0.nrt",
+      "weights_source": "weights/neuronte-emoji-v0.nrt",
+      "weights_sha256": "941d4be006b8d16ec84c4cfa62e30519c3ce35d8155a235c29304aced247c43b",
+      "manifest": "emoji-manifest.json",
+      "manifest_source": "font/emoji-manifest.json",
+      "manifest_sha256": "7968bf332a4ff5e9a96926eab3d0be0930d5522b0c54070e671074131cb6022b"
+    }
   },
   "kitty-framebuffer": {
     "license": "MIT",

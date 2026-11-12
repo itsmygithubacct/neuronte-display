@@ -127,6 +127,7 @@ Generic icon adoption remains held for coordinator approval.
 ```sh
 python3 tools/package.py --neuronte-home "$NEURONTE_SOURCE" \
   --video-home "$VIDEO_SOURCE" --ghostty "$BUILD_ROOT/ghostty" \
+  --emoji-home "$TRAINING_SOURCE" \
   --weights "$APPROVED_SPLIT_V5" \
   --output "$BUILD_ROOT/display.tar.gz"
 python3 tools/build_installer.py --source-iso "$DEBIAN_ISO" \
@@ -152,6 +153,12 @@ service. Existing selection is preserved; a new add-on defaults to X.
 masks the display manager only in Neuronte mode. `PLEB_DESKTOP=1` in
 `/etc/default/neuronte-display` selects the cell launcher. Optional colour uses
 `NEURONTE_EMOJI_WEIGHTS`, `NEURONTE_EMOJI_MANIFEST` and `NEURONTE_THEME` there.
+The accepted RC9 pair is installed as
+`/opt/neuronte-display/weights/neuronte-emoji-v0.nrt` and
+`/opt/neuronte-display/weights/emoji-manifest.json`; set those two variables to
+these paths to select it. The application must still request mode2027/VS16 for
+two-cell presentation. The bundled pair is pinned to training commit
+`c1a182d53ff4ecfc61e1b9c3f8b3c5d57a0505a3`; its hashes are in the dependency lock.
 A second VT retains kernel-console recovery.
 
 The installer builder derives from the existing Plebian-OS preseed without
