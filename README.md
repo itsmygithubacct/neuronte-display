@@ -101,9 +101,12 @@ Content updates still compose a full RGB frame and use the full KMS conversion
 path; pointer-only updates continue to use small damage rectangles.
 
 Evdev processing reads at most 256 raw events and dispatches at most 256
-logical events per device per poll. Consecutive complete motion reports may
-coalesce; button and wheel transitions form barriers and retain their order
-and final SYN coordinates. Large wheel counts continue on later polls. Primary
+logical events per device per poll. Every complete report is dispatched in
+order, motion included: a fast mouse's reports each reach the application
+with their own coordinates, and only drawing is merged, once per poll. The
+one exception is a pane whose input queue holds more than 64 KiB unread:
+motion to that pane is withheld, the newest report is kept and sent when the
+queue drains, and button and wheel reports are never withheld. Large wheel counts continue on later polls. Primary
 and side buttons and vertical/horizontal wheel notches are supported; high
 resolution wheel companion events are ignored to avoid duplicate notches.
 VT release cancels held buttons, and reacquisition discards stale input with
@@ -114,7 +117,7 @@ buttons and records a discontinuity when telemetry is enabled.
 `NEURONTE_POINTER_TELEMETRY`, enables optional 64 KiB buffered JSONL with schema
 `neuronte.pointer.v1`. The file must not already exist. `pointer_input` records
 have sequence, physical pixel coordinates, action/button, `input_ns`, and a
-`dispatched` flag that identifies superseded motion. `present` records link
+`dispatched` flag that is false for motion withheld from a backed-up pane. `present` records link
 the last dispatched sequence to requested and successfully presented positions,
 frame kind, `render_start_ns`, `submit_ns`, and `pageflip_ns`. All timestamps
 use the local monotonic clock: input starts at userspace read completion,

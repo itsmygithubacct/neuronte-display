@@ -465,6 +465,7 @@ class Pane:
         self.cw, self.ch, self.cols, self.rows = cw, ch, cols, rows
         self.name = Path(command[0]).name
         self.pending = bytearray()
+        self.withheld_motion = b''
         self.exit_status = None
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
@@ -565,6 +566,7 @@ class Workspace:
         self.tabs, self.tab, self.focus, self.prefix = [], 0, 0, False
         self.quit = False
         self.pointer = None
+        self.withheld_motion = 0
         self.content_dirty = True
         self.new_tab()
 
@@ -668,7 +670,14 @@ class Workspace:
             else:
                 self.selected.send(bytes([byte]))
 
+    # A pane whose application has stopped reading must not grow its input
+    # queue without bound on pointer motion. Above this backlog, motion for
+    # that pane is withheld and only the newest report is kept, to be sent
+    # once the queue drains. Buttons and wheels are never withheld.
+    MOTION_BACKLOG = 65536
+
     def mouse(self, x, y, action=2, button=0, mods=0):
+        """Route one pointer report. Returns False if motion was withheld."""
         self.pointer = (max(0,min(x,self.cols*self.cw-1)), max(0,min(y,self.rows*self.ch-1)))
         col, row = x//self.cw, y//self.ch
         if row == 0 and action == 0 and button == 1:
@@ -686,7 +695,13 @@ class Workspace:
                     if self.focus != i: self.content_dirty = True
                     self.focus = i
                 if row > py:
-                    pane.send(pane.terminal.mouse(action, button, x-px*self.cw, y-(py+1)*self.ch, mods))
+                    report = pane.terminal.mouse(action, button, x-px*self.cw, y-(py+1)*self.ch, mods)
+                    if action == 2 and len(pane.pending) > self.MOTION_BACKLOG:
+                        pane.withheld_motion = report
+                        self.withheld_motion += 1
+                        return False
+                    pane.withheld_motion = b''
+                    pane.send(report)
                 return
 
     def poll(self, timeout=0.05, keyboard=False, input_handler=None, pointer_input=None, active=True):
@@ -715,6 +730,9 @@ class Workspace:
             if owners[fd].fd is not None:
                 owners[fd].flush()
         for pane in self.panes():
+            if pane.withheld_motion and len(pane.pending) <= self.MOTION_BACKLOG:
+                report, pane.withheld_motion = pane.withheld_motion, b''
+                pane.send(report)
             previous_status = pane.exit_status
             pane.reap()
             if previous_status != pane.exit_status:

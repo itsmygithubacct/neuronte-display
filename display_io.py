@@ -143,11 +143,12 @@ class PointerTelemetry:
 
 
 class EvdevPointer:
-    """Bounded SYN-report processing, with lossless button/wheel barriers.
+    """Bounded SYN-report processing; every complete report is dispatched.
 
-    No EVIOCGRAB. Only adjacent complete motion reports in one bounded read
-    are coalesced; all transitions use their report's final coordinates.
-    Large wheel counts are retained and dispatched over subsequent polls.
+    No EVIOCGRAB. Motion reports are never merged here: each one is passed
+    to the workspace in order, between the transitions around it. All
+    transitions use their report's final coordinates. Large wheel counts
+    are retained and dispatched over subsequent polls.
     """
     event = struct.Struct('@llHHi')
     MAX_READ_EVENTS = 256
@@ -279,22 +280,23 @@ class EvdevPointer:
                     self.telemetry.pointer_seq = None
                 changed = True
                 continue
-            # A transition (including a wheel notch) is a coalescing barrier.
-            dispatched = action != 2 or not reports or reports[0][2] != 2
+            # Every complete report reaches the application, motion included:
+            # only drawing is merged, by the caller presenting once per poll.
+            # The workspace returns False for a motion report it withheld
+            # because that pane's input queue is backed up.
             if action == 2: button = self.button
+            dispatched = self.workspace.mouse(x, y, action, button) is not False
             if self.telemetry:
                 self.telemetry.input(input_ns, x, y, action, button, dispatched)
-            if dispatched:
-                self.workspace.mouse(x, y, action, button)
-                self.dispatched_position = x, y
-                changed = True
-                if button in self.BUTTONS.values() and action in (0, 1):
-                    key = fd, button
-                    if action == 0 and key not in self.held_buttons:
-                        self.held_buttons.append(key)
-                    elif action == 1 and key in self.held_buttons:
-                        self.held_buttons.remove(key)
-                    self.button = self.held_buttons[-1][1] if self.held_buttons else 0
+            self.dispatched_position = x, y
+            changed = True
+            if button in self.BUTTONS.values() and action in (0, 1):
+                key = fd, button
+                if action == 0 and key not in self.held_buttons:
+                    self.held_buttons.append(key)
+                elif action == 1 and key in self.held_buttons:
+                    self.held_buttons.remove(key)
+                self.button = self.held_buttons[-1][1] if self.held_buttons else 0
             if count > 1:
                 reports.appendleft((x, y, action, button, count-1, input_ns))
         return changed

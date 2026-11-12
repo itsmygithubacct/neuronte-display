@@ -157,7 +157,7 @@ class InputTests(unittest.TestCase):
     def enqueue(self, events):
         os.write(self.write, b''.join(self.device.event.pack(0, 0, *event) for event in events))
 
-    def test_only_adjacent_motion_coalesces_around_every_transition(self):
+    def test_every_motion_report_is_dispatched_in_order_around_every_transition(self):
         events = [(2, 0, 1), (0, 0, 0)]*3
         events += [(1, 272, 1), (2, 0, 2), (0, 0, 0)]
         events += [(2, 0, 1), (0, 0, 0)]*2
@@ -166,10 +166,21 @@ class InputTests(unittest.TestCase):
         self.enqueue(events)
         self.assertTrue(self.device.read(self.read))
         self.assertEqual(self.sink.events, [
-            (3, 0, 2, 0), (5, 0, 0, 1), (7, 0, 2, 1),
+            (1, 0, 2, 0), (2, 0, 2, 0), (3, 0, 2, 0), (5, 0, 0, 1),
+            (6, 0, 2, 1), (7, 0, 2, 1),
             (10, 0, 0, 4), (10, 0, 0, 4), (10, 0, 0, 2), (10, 0, 0, 5),
             (11, 0, 1, 1), (11, 0, 1, 2)])
         self.assertEqual(self.device.held_buttons, [])
+
+    def test_a_burst_of_motion_reaches_the_application_one_report_each(self):
+        # 120 one-pixel reports queued behind one slow frame, as a 1000 Hz
+        # mouse produces. Each must arrive, with its own coordinate.
+        self.enqueue([(2, 0, 1), (0, 0, 0)]*120)
+        self.device.read(self.read)
+        for _ in range(120):
+            if not self.device.ready_fds: break
+            self.device.read(self.read)
+        self.assertEqual(self.sink.events, [(x, 0, 2, 0) for x in range(1, 121)])
 
     def test_large_wheel_count_is_bounded_and_lossless_before_release(self):
         self.enqueue([(1, 272, 1), (2, 8, 700), (1, 272, 0), (0, 0, 0)])
@@ -249,14 +260,20 @@ class InputTests(unittest.TestCase):
         self.device.read(other_read)
         self.assertEqual(self.sink.events, [(0, 0, 0, 4)]*700+[(5, 0, 2, 0), (5, 0, 0, 1)])
 
-    def test_telemetry_coordinates_coalescing_and_cancelled_presentation(self):
+    def test_telemetry_coordinates_withheld_motion_and_cancelled_presentation(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'timing.jsonl'
             telemetry = PointerTelemetry(path)
             self.device.telemetry = telemetry
+            # The workspace withholds the first report (a backed-up pane)
+            # and delivers the second; telemetry records which was which.
+            answers = iter([False, None])
+            deliver = self.sink.mouse
+            self.sink.mouse = lambda *args: (deliver(*args), next(answers))[1]
             with patch('display_io.time.monotonic_ns', return_value=123):
                 self.enqueue([(2, 0, 1), (0, 0, 0), (2, 0, 2), (0, 0, 0)])
                 self.device.read(self.read)
+            self.assertEqual(self.sink.events, [(1, 0, 2, 0), (3, 0, 2, 0)])
             telemetry.present((3, 0), 'pointer', 130, dict(submit_ns=140, pageflip_ns=150))
             telemetry.present((4, 1), 'pointer', 160, None)
             telemetry.close()

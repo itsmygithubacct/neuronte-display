@@ -151,6 +151,38 @@ class PtyTests(unittest.TestCase):
         self.assertIsNone(pane.pid)
         self.assertIsNone(pane.fd)
 
+    def test_motion_is_withheld_only_while_a_pane_is_backed_up_then_resent(self):
+        workspace = d.Workspace(40, 20, command=["/bin/sh", "-c", "sleep 30"])
+        self.addCleanup(workspace.close)
+        pane = workspace.selected
+        pane.terminal.feed(b"\x1b[?1003h\x1b[?1006h")
+        sent = []
+        pane.send = sent.append
+        # Normal queue: every motion report is sent, in order.
+        for x in (8, 16, 24):
+            self.assertIsNot(workspace.mouse(x, 40, 2, 0), False)
+        self.assertEqual(sent, [b"\x1b[<35;2;1M", b"\x1b[<35;3;1M", b"\x1b[<35;4;1M"])
+        # Backed-up queue: motion is withheld, newest kept; buttons still go.
+        del sent[:]
+        pane.pending = bytearray(workspace.MOTION_BACKLOG+1)
+        self.assertIs(workspace.mouse(32, 40, 2, 0), False)
+        self.assertIs(workspace.mouse(40, 40, 2, 0), False)
+        self.assertEqual((sent, workspace.withheld_motion), ([], 2))
+        self.assertEqual(workspace.pointer, (40, 40))
+        self.assertIsNot(workspace.mouse(40, 40, 0, 1), False)
+        self.assertEqual(sent, [b"\x1b[<0;6;1M"])
+        self.assertEqual(pane.withheld_motion, b"")
+        # Withheld again, then the queue drains: the newest report follows.
+        del sent[:]
+        workspace.mouse(48, 40, 2, 1)
+        workspace.mouse(56, 40, 2, 1)
+        self.assertEqual(sent, [])
+        pane.pending = bytearray()
+        workspace.poll(0)
+        self.assertEqual(sent, [b"\x1b[<32;8;1M"])
+        workspace.poll(0)
+        self.assertEqual(len(sent), 1)
+
     def test_focus_tabs_splits_resize_and_reap(self):
         command = ["/bin/sh", "-c", 'printf READY; while IFS= read -r line; do printf "\\r\\nGOT:%s\\r\\n" "$line"; stty size; done']
         workspace = d.Workspace(60, 24, command=command)
