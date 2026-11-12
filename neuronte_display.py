@@ -76,11 +76,13 @@ class Terminal:
             raise RuntimeError("Cannot create terminal parser")
         self.cols, self.rows = cols, rows
         self.cursor_style = 'block'
+        self._snapshot_cells = self._snapshot_values = self._snapshot_records = None
 
     def resize(self, cols, rows, cw=8, ch=16):
         if self.lib.nd_resize(self.ptr, cols, rows, cw, ch):
             raise ValueError("Invalid terminal geometry")
         self.cols, self.rows = cols, rows
+        self._snapshot_cells = self._snapshot_values = self._snapshot_records = None
 
     def feed(self, data):
         if self.lib.nd_feed(self.ptr, data, len(data)):
@@ -92,7 +94,12 @@ class Terminal:
         return buf.raw[:size]
 
     def snapshot(self):
-        cells = (NativeCell * (self.cols * self.rows))()
+        count = self.cols*self.rows
+        first = self._snapshot_values is None
+        if first:
+            self._snapshot_cells = (NativeCell*count)()
+            self._snapshot_records = [None]*count
+        cells = self._snapshot_cells
         cursor = (C.c_int * 2)()
         if self.lib.nd_snapshot(self.ptr, cells, len(cells), cursor) != len(cells):
             raise RuntimeError("Cannot capture complete terminal grid")
@@ -100,16 +107,23 @@ class Terminal:
         if style not in (0, 1, 2, 3):
             raise RuntimeError("Cannot capture terminal cursor style")
         self.cursor_style = {0:'bar', 1:'block', 2:'underline', 3:'block'}[style]
-        out = []
-        for c in cells:
-            points = "".join(chr(c.points[i]) for i in range(c.length))
-            points = tuple(map(ord, points))
-            scalar = (points[0] if len(points) == 1 else points) if points else 32
+        # Most updates change only a few cells. Compare the complete native
+        # records (including every grapheme scalar) in bulk, then decode only
+        # changed records in Python. nd_snapshot initializes all record bytes.
+        values = np.frombuffer(cells, np.uint32).reshape(count, -1)
+        changed = range(count) if first else np.flatnonzero(np.any(values != self._snapshot_values, axis=1))
+        for index in changed:
+            c = cells[index]
+            scalar = c.points[0] if c.length == 1 else tuple(c.points[:c.length]) if c.length else 32
             flags = c.flags | (512 if c.wide == 1 else 0) | (1024 if c.wide >= 2 else 0)
             if c.wide >= 2:  # spacer, never a second unknown-character mark
                 scalar = 32
-            out.append((scalar, c.fg, c.bg, flags))
-        return out, tuple(cursor)
+            self._snapshot_records[index] = (scalar, c.fg, c.bg, flags)
+        if first: self._snapshot_values = values.copy()
+        else: np.copyto(self._snapshot_values, values)
+        # Callers may replace records (for example a block cursor overlay).
+        # Keep the retained parser state isolated from those list mutations.
+        return list(self._snapshot_records), tuple(cursor)
 
     def mouse(self, action, button, x, y, mods=0):
         buf = C.create_string_buffer(128)
@@ -265,6 +279,38 @@ class Renderer:
         self.previous = []
         self.frame = None
         self.last = {}
+        self._render_config = self._ink_config = None
+        self._ink_previous = []
+        self._ink_frame = None
+        self._cell_stats = []
+        self._stat_totals = [0, 0, 0]
+
+    def configuration(self, cols, rows):
+        return (cols, rows, id(self.cache), self.cache.cw, self.cache.ch,
+                id(self.emoji), getattr(self.emoji, 'theme', None),
+                id(self.icons), getattr(self.icons, 'theme', None))
+
+    @staticmethod
+    def freeze_records(records):
+        # Parser records are already immutable. Also support snapshot JSON and
+        # callers that mutate list records after a render without hiding edits.
+        return [record if isinstance(record, tuple) and not isinstance(record[0], list)
+                else (tuple(record[0]) if isinstance(record[0], list) else record[0], *record[1:])
+                for record in records]
+
+    @staticmethod
+    def changed_indices(records, previous, cols, force=False):
+        if force or len(records) != len(previous): return range(len(records))
+        changed = [i for i, record in enumerate(records) if record != previous[i]]
+        affected = set(changed)
+        for i in changed:
+            # A right half depends on its left record; the left half's artwork
+            # selection also depends on whether the right spacer still exists.
+            if i % cols and (records[i][3] | previous[i][3]) & 1024:
+                affected.add(i-1)
+            if i % cols+1 < cols and (records[i+1][3] | previous[i+1][3]) & 1024:
+                affected.add(i+1)
+        return sorted(affected)
 
     def lines(self, flags):
         if not flags & (4|8|128): return None
@@ -314,8 +360,19 @@ class Renderer:
         return ((fg * alpha + bg * (255 - alpha) + 127) // 255).astype(np.uint8)
 
     def ink(self, records, cols, rows):
-        out = np.empty((rows*self.cache.ch,cols*self.cache.cw),np.uint8)
-        for i,(scalar,_fg,_bg,flags) in enumerate(records):
+        """Retained read-only ink view; refresh only changed/dependent cells."""
+        if len(records) != cols*rows:
+            raise ValueError('Grid record count does not match geometry')
+        config = self.configuration(cols, rows)
+        records = self.previous if config == self._render_config and records == self.previous else self.freeze_records(records)
+        force = config != self._ink_config
+        shape = (rows*self.cache.ch, cols*self.cache.cw)
+        if self._ink_frame is None or self._ink_frame.shape != shape:
+            self._ink_frame = np.empty(shape, np.uint8)
+            force = True
+        changed = self.changed_indices(records, self._ink_previous, cols, force)
+        for i in changed:
+            scalar, _fg, _bg, flags = records[i]
             art = self.artwork(records,i,cols)
             if art:
                 asset,cp,half,_,_,style = art
@@ -326,39 +383,50 @@ class Renderer:
                     if flags&bit: mask=np.maximum(mask,self.cache.get(cp))
                 if flags&64: mask=np.zeros_like(mask)
             y,x=divmod(i,cols)
-            out[y*self.cache.ch:(y+1)*self.cache.ch,x*self.cache.cw:(x+1)*self.cache.cw]=mask
+            self._ink_frame[y*self.cache.ch:(y+1)*self.cache.ch,x*self.cache.cw:(x+1)*self.cache.cw]=mask
+        self._ink_previous, self._ink_config = records, config
+        self.last['ink_changed_cells'] = len(changed)
+        out = self._ink_frame.view()
+        out.setflags(write=False)
         return out
 
     def render(self, records, cols, rows, force=False):
         if len(records) != cols * rows:
             raise ValueError("Grid record count does not match geometry")
         start = time.perf_counter()
+        records = self.freeze_records(records)
+        config = self.configuration(cols, rows)
+        force = force or config != self._render_config
         shape = (rows * self.cache.ch, cols * self.cache.cw, 3)
         if self.frame is None or self.frame.shape != shape:
             self.frame = np.empty(shape, np.uint8)
             force = True
-        changed = 0
-        for index, record in enumerate(records):
-            left=records[index-1] if index%cols and record[3]&1024 else record
-            dependent_change=(index%cols and record[3]&1024 and
-                              (index-1>=len(self.previous) or left!=self.previous[index-1]))
-            if force or index >= len(self.previous) or record != self.previous[index] or dependent_change:
-                y, x = divmod(index, cols)
-                y, x = y * self.cache.ch, x * self.cache.cw
-                art = self.artwork(records,index,cols)
-                if art:
-                    asset,cp,half,fg,bg,style = art
-                    cell = asset.cell(cp,half,fg,bg,style,self.lines(style))
-                else: cell = self.cell(record)
-                self.frame[y:y + self.cache.ch, x:x + self.cache.cw] = cell
-                changed += 1
-        self.previous = list(records)
-        self.last = {"seconds": time.perf_counter() - start, "changed_cells": changed,
-                     "styled_cells": sum(bool(c[3] & 3) for c in records),
-                     "composed_grapheme_cells": sum(len(self.graphemes.plan(c[0]) or ())>1 and
-                         self.graphemes.supported(c[0],c[3]&3) for c in records),
-                     "unsupported_grapheme_cells": sum(not self.artwork(records,i,cols) and
-                         (bool(c[3]&256) or not self.graphemes.supported(c[0],c[3]&3)) for i,c in enumerate(records))}
+        if force:
+            self._cell_stats = [(0, 0, 0)]*len(records)
+            self._stat_totals = [0, 0, 0]
+        changed = self.changed_indices(records, self.previous, cols, force)
+        for index in changed:
+            record = records[index]
+            y, x = divmod(index, cols)
+            y, x = y * self.cache.ch, x * self.cache.cw
+            art = self.artwork(records,index,cols)
+            if art:
+                asset,cp,half,fg,bg,style = art
+                cell = asset.cell(cp,half,fg,bg,style,self.lines(style))
+            else: cell = self.cell(record)
+            self.frame[y:y + self.cache.ch, x:x + self.cache.cw] = cell
+            plan = self.graphemes.plan(record[0])
+            supported = self.graphemes.supported(record[0], record[3]&3)
+            stats = (bool(record[3]&3), len(plan or ())>1 and supported,
+                     not art and (bool(record[3]&256) or not supported))
+            old = self._cell_stats[index]
+            for field in range(3): self._stat_totals[field] += int(stats[field])-int(old[field])
+            self._cell_stats[index] = stats
+        self.previous, self._render_config = records, config
+        self.last = {"seconds": time.perf_counter() - start, "changed_cells": len(changed),
+                     "styled_cells": self._stat_totals[0],
+                     "composed_grapheme_cells": self._stat_totals[1],
+                     "unsupported_grapheme_cells": self._stat_totals[2]}
         return self.frame
 
 
@@ -379,7 +447,7 @@ class FrameComposer:
                 workspace.text_ink = self.renderer.ink(self.records, workspace.cols, workspace.rows)
                 self.graphics.composite(background, workspace)
             self.renderer.cursor(background, workspace.cursor, self.records, workspace.cols)
-            self.pointer.replace(background)
+            self.pointer.replace(background, owned=True)
         start = time.perf_counter()
         damage = self.pointer.move(workspace.pointer)
         self.renderer.last['frame_kind'] = 'full' if full else 'pointer'

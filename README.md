@@ -87,6 +87,19 @@ buffers; each is fully refreshed before small updates resume. Full-screen
 scanout and synchronous pageflip pacing remain. The Kitty backend still sends
 a complete frame through its existing presentation API.
 
+Changed-content frames compare complete native cell records in bulk and decode
+only altered cells into Python records. RGB rendering statistics and the text
+ink plane retain per-cell state, including dependencies between wide halves;
+geometry, selected artwork and theme changes invalidate those caches. Ink is a
+read-only retained view, so callers needing an independent snapshot must copy
+it. Mutable input records are frozen before retention.
+
+The composed frame transfers to the pointer overlay, which saves only the
+pixels beneath the pointer. This removes a second full RGB copy on content
+updates while preserving graphics, colour artwork and text cursors exactly.
+Content updates still compose a full RGB frame and use the full KMS conversion
+path; pointer-only updates continue to use small damage rectangles.
+
 Evdev processing reads at most 256 raw events and dispatches at most 256
 logical events per device per poll. Consecutive complete motion reports may
 coalesce; button and wheel transitions form barriers and retain their order

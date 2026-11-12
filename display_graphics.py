@@ -129,7 +129,7 @@ def pointer_bounds(shape, position, cache, icons=None, model=None):
 
 
 class PointerFrame:
-    """Retain the composed scene, including graphics and the text cursor.
+    """Retain the composed scene and save only the pixels under the pointer.
 
     Only old/new pointer rectangles are touched between content updates.
     Damage uses exclusive right/bottom coordinates for the KMS converter.
@@ -137,23 +137,36 @@ class PointerFrame:
     def __init__(self, cache, icons=None, model=None):
         self.cache, self.icons = cache, icons
         self.model = model
-        self.background = self.frame = None
+        self.frame = self.saved = None
         self.bounds = self.position = None
 
-    def replace(self, background):
-        self.background = background
-        self.frame = background.copy()
+    @property
+    def background(self):
+        """Pointer-free snapshot for inspection; not used by presentation."""
+        out = self.frame.copy()
+        if self.bounds:
+            x0, y0, x1, y1 = self.bounds
+            out[y0:y1, x0:x1] = self.saved
+        return out
+
+    def replace(self, background, owned=False):
+        # The compositor transfers its freshly composed frame. Other callers
+        # keep their source array, matching the previous replace() contract.
+        self.frame = background if owned else background.copy()
+        self.saved = None
         self.bounds = self.position = None
 
     def move(self, position):
         damage = []
         if self.bounds:
             x0, y0, x1, y1 = self.bounds
-            self.frame[y0:y1, x0:x1] = self.background[y0:y1, x0:x1]
+            self.frame[y0:y1, x0:x1] = self.saved
             damage.append(self.bounds)
         self.bounds = pointer_bounds(self.frame.shape, position, self.cache, self.icons, self.model)
         self.position = position
         if self.bounds:
+            x0, y0, x1, y1 = self.bounds
+            self.saved = self.frame[y0:y1, x0:x1].copy()
             pointer(self.frame, position, self.cache, icons=self.icons, model=self.model)
             if self.bounds not in damage:
                 damage.append(self.bounds)
