@@ -76,10 +76,14 @@ select a separately trained italic face. Reverse, dim, underline, strike and
 overline remain supported. Block cursors invert
 colours; cursor blinking and distinct bar/underline cursors are not implemented.
 
-Full graphemes up to 64 scalars are preserved in grid records. NFC-composable
-clusters render their composed scalar. Unsupported multiscalar shaping and
-oversized clusters render U+FFFD and are counted explicitly. There is no claim
-of Arabic/Indic shaping, combining-mark placement, ZWJ emoji, modifiers or flags.
+Full graphemes up to64 scalars are preserved in grid records. Known trained NFC
+characters retain their exact masks. With the hash-bound approved text bundles,
+supported Latin/Greek/Russian bases and all16 existing marks compose from
+trained spacing/punctuation masks, including non-NFC and bounded stacked cases.
+The [composition policy](GRAPHEMES.md) defines synthetic anchors, dot/descender
+handling, clipping and limits. Unsupported shaping/marks, excessive stacks or
+empty components use a whole-cluster U+FFFD and are counted explicitly.
+Arabic/Indic shaping, ZWJ emoji, modifiers and flags remain unsupported.
 Unknown single scalars still use the bundle's learned routing. Untrained wide
 characters reserve two cells with the resulting mark in the first cell.
 

@@ -19,6 +19,7 @@ import termios
 import time
 import tty
 import unicodedata
+from display_graphemes import Graphemes, IDENTITY as GRAPHEME_IDENTITY
 
 import numpy as np
 from display_io import KMS, OuterInput, EvdevPointer
@@ -251,6 +252,7 @@ class Renderer:
     def __init__(self, cache, emoji=None):
         self.cache = cache
         self.emoji = emoji
+        self.graphemes = Graphemes(cache)
         self.previous = []
         self.frame = None
         self.last = {}
@@ -258,11 +260,7 @@ class Renderer:
     def cell(self, record, cached=True):
         scalar, fg, bg, flags = record
         get = self.cache.get if cached else self.cache.infer
-        # Preserve the entire NFC cluster. A multi-scalar sequence which cannot
-        # be shaped by these scalar nets gets one explicit replacement mark;
-        # never silently render its first codepoint as if shaping succeeded.
-        scalar=render_scalar(scalar)
-        mask = get(scalar, flags & 3)
+        mask = self.graphemes.mask(scalar, flags & 3, cached)
         if flags & 4:
             mask = np.maximum(mask, get(0x2581))
         if flags & 8:
@@ -287,8 +285,7 @@ class Renderer:
             if emoji_scalar is not None:
                 mask=self.emoji.mask(emoji_scalar,int(bool(flags&1024)),left[3])
             else:
-                scalar=render_scalar(scalar)
-                mask=self.cache.get(scalar,flags&3)
+                mask=self.graphemes.mask(scalar,flags&3)
                 for bit,cp in ((4,0x2581),(8,0x2500),(128,0x2594)):
                     if flags&bit: mask=np.maximum(mask,self.cache.get(cp))
                 if flags&64: mask=np.zeros_like(mask)
@@ -319,9 +316,9 @@ class Renderer:
         self.previous = list(records)
         self.last = {"seconds": time.perf_counter() - start, "changed_cells": changed,
                      "styled_cells": sum(bool(c[3] & 3) for c in records),
-                     "unsupported_grapheme_cells": sum(bool(c[3] & 256) or
-                         (isinstance(c[0], (list, tuple)) and render_scalar(c[0]) == 0xfffd)
-                         for c in records)}
+                     "composed_grapheme_cells": sum(len(self.graphemes.plan(c[0]) or ())>1 and
+                         self.graphemes.supported(c[0],c[3]&3) for c in records),
+                     "unsupported_grapheme_cells": sum(bool(c[3]&256) or not self.graphemes.supported(c[0],c[3]&3) for c in records)}
         return self.frame
 
 
@@ -620,6 +617,7 @@ def save_snapshot(path, frame, records, workspace, cache, timing, graphics=None,
         "records": records, "timing": timing, "cache": dict(cache.stats),
         "pointer": workspace.pointer, "planes": graphics.records if graphics else [],
         "emoji": emoji.identity if emoji else None,
+        "graphemes": GRAPHEME_IDENTITY,
         "screen": screen or [width,height], "frame_sha256":hashlib.sha256(raw).hexdigest(),
         "rgb_sha256":hashlib.sha256(frame.tobytes()).hexdigest()}
     temp=path.with_suffix('.json.tmp')

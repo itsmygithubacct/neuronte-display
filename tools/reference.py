@@ -11,6 +11,10 @@ import json
 import unicodedata
 from pathlib import Path
 import numpy as np
+if __package__:
+    from .reference_graphemes import reference_composer
+else:
+    from reference_graphemes import reference_composer
 
 
 def reconstruct(document, weights, library, video_weights=None, emoji_weights=None, emoji_manifest=None):
@@ -42,11 +46,21 @@ def reconstruct(document, weights, library, video_weights=None, emoji_weights=No
         return masks[key]
     def rgb(value): return np.array([value>>16&255,value>>8&255,value&255],dtype=np.uint16)
     try:
+        composed_mask=None
+        if document.get('graphemes'):
+            policy_path=Path(__file__).resolve().parents[1]/'graphemes.json'
+            raw=policy_path.read_bytes()
+            if hashlib.sha256(raw).hexdigest()!=document['graphemes']['sha256']:
+                raise ValueError('reference grapheme policy identity differs')
+            composed_mask=reference_composer(json.loads(raw),hashlib.sha256(Path(weights).read_bytes()).hexdigest(),cw,ch,mask)
         for index,(scalar,fg,bg,flags) in enumerate(document['records']):
-            if isinstance(scalar,list):
+            if composed_mask:
+                coverage=composed_mask(scalar,flags&3).copy()
+            elif isinstance(scalar,(list,tuple)):
                 text=unicodedata.normalize('NFC',''.join(chr(cp) for cp in scalar if cp not in (65038,65039)))
                 scalar=ord(text) if len(text)==1 else 65533
-            coverage=mask(scalar,flags&3).copy()
+                coverage=mask(scalar,flags&3).copy()
+            else:coverage=mask(scalar,flags&3).copy()
             for flag,cp in ((4,9601),(8,9472),(128,9620)):
                 if flags&flag: coverage=np.maximum(coverage,mask(cp))
             if flags&64: coverage[:]=0

@@ -47,7 +47,7 @@ def main():
     args.output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
         staging=Path(directory)/'neuronte-display'
-        files={name:root/name for name in ('neuronte_display.py','display_io.py','display_graphics.py','display_emoji.py','cell_desktop.py','LICENSE','README.md','deps.lock.json','Makefile','native.c','kms.c','tools/build_parser.py','tools/package.py','build/libneuronte-display.so','build/libneuronte-kms.so')}
+        files={name:root/name for name in ('neuronte_display.py','display_io.py','display_graphics.py','display_emoji.py','display_graphemes.py','graphemes.json','GRAPHEMES.md','cell_desktop.py','LICENSE','README.md','deps.lock.json','Makefile','native.c','kms.c','tools/build_parser.py','tools/package.py','build/libneuronte-display.so','build/libneuronte-kms.so')}
         files.update({str(p.relative_to(root)):p for p in (root/'provision').iterdir() if p.is_file()})
         files.update({str(p.relative_to(root)):p for p in (root/'vendor/ghostty').rglob('*') if p.is_file()})
         files.update({'build/libghostty-vt.so.0':args.ghostty/'lib/libghostty-vt.so.0',

@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "bundles": {
+    "1e2d89c4d8cc96e7c23eeec2ef688d31222aeb5e4303ecb2dce0c7c783aa8cf5": "latin",
+    "8a072c27f1241c536b04ea77d82efdc005399762421f86bd18d950206528ec83": "scripts"
+  },
+  "trained_ranges": {
+    "latin": [[32,126],[168,168],[175,175],[180,180],[184,184],[192,214],[216,383],[710,711],[728,733]],
+    "scripts": [[913,929],[931,937],[945,969],[1025,1025],[1040,1103],[1105,1105]]
+  },
+  "marks": {
+    "0300": {"scalar": 180, "transform": "mirror-x", "anchor": "above"},
+    "0301": {"scalar": 180, "anchor": "above"},
+    "0302": {"scalar": 710, "anchor": "above"},
+    "0303": {"scalar": 732, "anchor": "above"},
+    "0304": {"scalar": 175, "anchor": "above"},
+    "0306": {"scalar": 728, "anchor": "above"},
+    "0307": {"scalar": 729, "anchor": "above"},
+    "0308": {"scalar": 168, "anchor": "above"},
+    "030A": {"scalar": 730, "anchor": "above"},
+    "030B": {"scalar": 733, "anchor": "above"},
+    "030C": {"scalar": 711, "anchor": "above"},
+    "0312": {"scalar": 44, "transform": "rotate-180", "anchor": "above", "fit_grid": [4.25,2.55,6.55,6.25]},
+    "0315": {"scalar": 44, "anchor": "beside", "fit_grid": [3.65,2.85,5.75,6.95]},
+    "0326": {"scalar": 44, "anchor": "below", "fit_grid": [3.45,16.15,5.75,20]},
+    "0327": {"scalar": 184, "anchor": "below"},
+    "0328": {"scalar": 731, "anchor": "below"}
+  },
+  "geometry": {
+    "design": [10,20], "cap_top": 4, "x_height": 8, "baseline": 15,
+    "short_top": 5.8, "capital_raise": 2.3, "pen_radius": 0.75,
+    "dotless_j_body_from": 7, "maximum_marks_per_anchor": 2,
+    "above_centres": {"0131": 5, "006A": 6.5, "004A": 6, "006C": 5},
+    "caron_beside": {"0064": 8.9, "006C": 7.2, "0074": 6.6, "004C": 4.5},
+    "cedilla_comma": "GKLNRknlr", "cedilla_turned": "g"
+  },
+  "provenance": {
+    "source_revision": "4b6b126d13f95673ab31c2582051e6b22db16e3b",
+    "marks_sha256": "82035c3588eaa7feb7cc5a47e2682edf47bff36ea3b21194fe5b7f6777f12bcb",
+    "notes": "Coverage comes only from trained spacing glyphs/punctuation. Grave mirrors acute. Three comma forms use cropped/rotated/resized trained comma coverage within source-derived ink bounds. No stroke drawings or external fonts are loaded. Placement is a disclosed synthetic raster policy."
+  }
+}
