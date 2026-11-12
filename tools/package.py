@@ -73,6 +73,18 @@ def selected_pointer(weights, manifest):
     return {doc['model']: data, 'weights/neuronte-pointer-v0.manifest.json': raw}
 
 
+def write_archive(staging, output):
+    """Payload traversal/read permissions must not inherit the builder's umask."""
+    def permissions(member):
+        if member.isdir():
+            member.mode = 0o755
+        elif member.isfile():
+            member.mode = 0o755 if member.mode & 0o111 else 0o644
+        return member
+    with tarfile.open(output, 'w:gz') as archive:
+        archive.add(staging, arcname='neuronte-display', filter=permissions)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--neuronte-home',type=Path,required=True)
@@ -139,8 +151,7 @@ def main():
             target.chmod(0o755 if name.endswith('.so') or '.so.' in name or name.startswith('provision/') and not name.endswith(('.json','.service')) else 0o644)
             manifest[name]=hashlib.sha256(target.read_bytes()).hexdigest()
         (staging/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-        with tarfile.open(args.output,'w:gz') as archive:
-            archive.add(staging,arcname='neuronte-display')
+        write_archive(staging, args.output)
     print(json.dumps({'output':str(args.output),'sha256':hashlib.sha256(args.output.read_bytes()).hexdigest(),'files':len(manifest)}))
 
 

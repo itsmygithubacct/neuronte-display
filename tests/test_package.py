@@ -1,11 +1,63 @@
 import hashlib
 import json
+import os
 from pathlib import Path
+import stat
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
-from tools.package import locked_emoji,locked_icons
+from tools.package import locked_emoji,locked_icons,write_archive
+
+
+class PayloadPermissionTests(unittest.TestCase):
+    def test_archive_and_extraction_modes_do_not_inherit_private_umask(self):
+        expected = {
+            'neuronte-display': 0o755,
+            'neuronte-display/weights': 0o755,
+            'neuronte-display/weights/pointer.nrt': 0o644,
+            'neuronte-display/vendor': 0o755,
+            'neuronte-display/vendor/parser': 0o755,
+            'neuronte-display/vendor/parser/library.so': 0o755,
+            'neuronte-display/manifest.json': 0o644,
+        }
+        for mask in (0o077, 0o027, 0o022):
+            with self.subTest(umask=oct(mask)), tempfile.TemporaryDirectory() as temp:
+                previous = os.umask(mask)
+                try:
+                    root = Path(temp)
+                    staging = root/'staging'
+                    (staging/'weights').mkdir(parents=True)
+                    (staging/'vendor/parser').mkdir(parents=True)
+                    model = staging/'weights/pointer.nrt'
+                    model.write_bytes(b'unchanged model bytes')
+                    model.chmod(0o644)  # Existing payload file policy.
+                    library = staging/'vendor/parser/library.so'
+                    library.write_bytes(b'executable library fixture')
+                    library.chmod(0o755)
+                    (staging/'manifest.json').write_text('{}\n')
+                    if mask == 0o077:
+                        self.assertEqual(stat.S_IMODE((staging/'weights').stat().st_mode), 0o700)
+                    target = root/'payload.tar.gz'
+                    write_archive(staging, target)
+                    with tarfile.open(target) as archive:
+                        self.assertEqual({m.name: m.mode for m in archive}, expected)
+                        self.assertEqual(archive.extractfile('neuronte-display/weights/pointer.nrt').read(),
+                                         b'unchanged model bytes')
+                    installed = root/'installed'
+                    installed.mkdir()
+                    # Match privileged tar's permission restoration without
+                    # root or chown. Python's data extraction filter purposely
+                    # discards directory modes, so it cannot model this install.
+                    subprocess.run(['tar', '-xzf', str(target), '-C', str(installed),
+                                    '--same-permissions', '--no-same-owner'], check=True)
+                    # Even with a restrictive umask, every payload ancestor is
+                    # traversable and the model is readable by another account.
+                    for path, mode in expected.items():
+                        self.assertEqual(stat.S_IMODE((root/'installed'/path).stat().st_mode), mode)
+                finally:
+                    os.umask(previous)
 
 
 class EmojiClosureTests(unittest.TestCase):
