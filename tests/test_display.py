@@ -308,6 +308,53 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(renderer.last["changed_cells"], 1)
 
 
+V2 = Path(os.environ["NEURONTE_V2_HOME"]) if os.environ.get("NEURONTE_V2_HOME") else None
+
+
+@unittest.skipUnless(V2 and (V2/"weights/neuronte-split-v9.nrt").is_file() and (V2/"build/libneuronte.so").is_file(),
+                     "NEURONTE_V2_HOME names no built neuronte-v2 checkout")
+class BundleTests(unittest.TestCase):
+    """With neuronte-v2, a terminal's character goes to the net trained on it."""
+
+    def cache(self, weights):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        cache = d.MaskCache(weights, V2/"build/libneuronte.so", directory.name, 8, 16)
+        self.addCleanup(cache.close)
+        return cache
+
+    def test_each_character_goes_to_its_net(self):
+        cache = self.cache(V2/"weights/neuronte-split-v9.nrt")
+        self.assertTrue(cache.routing)
+        want = {0x41: "neuronte-split-v9.nrt", 0x4dc0: "neuronte-term-blocks-v1.nrt",
+                0x2600: "neuronte-term-dingbat-v1.nrt", 0xf0731: "neuronte-kilix-chrome-v1.nrt",
+                0x4e2d: "mark", 0x4e00: "mark"}
+        self.assertEqual({scalar: cache.net(scalar)[1] for scalar in want}, want)
+        # Only listed bundles open: never kilix-chrome-v2, made two cells wide.
+        names = [name for name, _handle in cache.bundles]
+        self.assertEqual(names, sorted(names))
+        self.assertIn("neuronte-term-dingbat-v1.nrt", names)
+        self.assertNotIn("neuronte-kilix-chrome-v2.nrt", names)
+
+    def test_the_masks_are_drawn_by_that_net(self):
+        cache = self.cache(V2/"weights/neuronte-split-v9.nrt")
+        # The mark is one shape for every untrained letter, and not the
+        # hexagram's, which term-blocks draws.
+        self.assertTrue(np.array_equal(cache.get(0x4e2d), cache.get(0x4e00)))
+        self.assertFalse(np.array_equal(cache.get(0x4e2d), cache.get(0x4dc0)))
+        self.assertGreater(int(cache.get(0x4dc0).sum()), 0)
+        # split-v9 alone draws the hexagram as something else.
+        with tempfile.TemporaryDirectory() as alone:
+            only = Path(alone, "neuronte-split-v9.nrt")
+            only.symlink_to(V2/"weights/neuronte-split-v9.nrt")
+            bare = self.cache(only)
+            self.assertEqual(bare.bundles, [])
+            self.assertEqual(bare.net(0x4dc0)[1], "mark")
+            self.assertFalse(np.array_equal(bare.get(0x4dc0), cache.get(0x4dc0)))
+            # Bundles are part of the cache's identity: the two do not share masks.
+            self.assertNotEqual(bare.identity_bytes, cache.identity_bytes)
+
+
 class PtyTests(unittest.TestCase):
     def test_close_last_pane_with_queued_keys(self):
         workspace = d.Workspace(40, 20, command=["/bin/sh"])

@@ -186,8 +186,27 @@ def digest_file(path):
         return hashlib.file_digest(fh, "sha256").hexdigest()
 
 
+BUNDLES_MAX = 16
+
+
+def listed_bundles(weights):
+    """The neuronte-v2 bundles beside a weight file that draw text, in name
+    order, at most BUNDLES_MAX: each has its NAME.list.txt beside it, and no
+    two listed bundles claim one character. An unlisted file, such as
+    kilix-chrome-v2 (made for a box two cells wide), is left out."""
+    folder = Path(weights).parent
+    names = sorted(path.name for pattern in ("neuronte-term-*.nrt", "neuronte-kilix-*.nrt")
+                   for path in folder.glob(pattern) if (folder / (path.stem + ".list.txt")).is_file())
+    return [folder / name for name in names[:BUNDLES_MAX]]
+
+
 class MaskCache:
-    """Weight/library/config-bound, checksummed masks; no external font files."""
+    """Weight/library/config-bound, checksummed masks; no external font files.
+
+    With a neuronte-v2 library, a character the weights were not trained on
+    is drawn by the listed bundle beside them that was, else as the
+    library's untrained mark; an older library draws everything from the
+    weights."""
     MAGIC = b"NRMASK2\0"
 
     def __init__(self, weights, library, cache_dir, cw=8, ch=16, limit=4096):
@@ -199,11 +218,17 @@ class MaskCache:
         self.identity = {"version": 2, "weights": digest_file(weights),
                          "library": digest_file(library), "width": cw, "height": ch,
                          "samples": 2, "quantization": "nearest-u8"}
+        self.lib = C.CDLL(str(library))
+        self.routing = hasattr(self.lib, "neuronte_untrained") and hasattr(self.lib, "neuronte_set_untrained")
+        bundles = listed_bundles(weights) if self.routing else []
+        if self.routing:
+            # The masks hang on the bundles and the mark too.
+            self.identity["bundles"] = [[path.name, digest_file(path)] for path in bundles]
+            self.identity["mark"] = True
         namespace = hashlib.sha256(json.dumps(self.identity, sort_keys=True).encode()).hexdigest()
         self.identity_bytes = bytes.fromhex(namespace)
         self.directory = Path(cache_dir) / namespace
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.lib = C.CDLL(str(library))
         self.lib.neuronte_open_file.argtypes = [C.c_char_p, C.POINTER(C.c_void_p)]
         self.lib.neuronte_open_file.restype = C.c_int
         self.lib.neuronte_coverage.argtypes = [C.c_void_p, C.c_uint32, C.c_int, C.c_int,
@@ -213,10 +238,42 @@ class MaskCache:
         self.ptr = C.c_void_p()
         if self.lib.neuronte_open_file(os.fsencode(weights), C.byref(self.ptr)):
             raise RuntimeError("Cannot open Neuronte weights")
+        self.weights_name = Path(weights).name
+        self.bundles, self.mark = [], None
+        if self.routing:
+            self.lib.neuronte_untrained.argtypes = [C.c_void_p, C.c_uint32]
+            self.lib.neuronte_untrained.restype = C.c_int
+            self.lib.neuronte_set_untrained.argtypes = [C.c_void_p, C.c_int]
+            self.lib.neuronte_set_untrained.restype = C.c_int
+            for path in bundles:
+                handle = C.c_void_p()
+                if self.lib.neuronte_open_file(os.fsencode(path), C.byref(handle)):
+                    self.close()
+                    raise RuntimeError(f"Cannot open Neuronte bundle {path.name}")
+                self.bundles.append((path.name, handle))
+            mark = C.c_void_p()
+            if self.lib.neuronte_open_file(os.fsencode(weights), C.byref(mark)):
+                self.close()
+                raise RuntimeError("Cannot open Neuronte weights")
+            self.mark = mark
+            if self.lib.neuronte_set_untrained(self.mark, 1):
+                self.close()
+                raise RuntimeError("Cannot set the untrained mark")
+
+    def net(self, scalar):
+        """The handle that draws this character, and its file's name ("mark"
+        for the untrained mark): the weights where they were trained on it,
+        else the first listed bundle that was, else the mark."""
+        if not self.routing or self.lib.neuronte_untrained(self.ptr, scalar) != 1:
+            return self.ptr, self.weights_name
+        for name, handle in self.bundles:
+            if self.lib.neuronte_untrained(handle, scalar) == 0:
+                return handle, name
+        return self.mark, "mark"
 
     def infer(self, scalar):
         buf = (C.c_float * (self.cw * self.ch))()
-        if self.lib.neuronte_coverage(self.ptr, scalar, self.cw, self.ch, 2, buf):
+        if self.lib.neuronte_coverage(self.net(scalar)[0], scalar, self.cw, self.ch, 2, buf):
             raise RuntimeError(f"Cannot render U+{scalar:04X}")
         self.stats["inferences"] += 1
         values = np.frombuffer(buf, dtype=np.float32).reshape(self.ch, self.cw)
@@ -268,6 +325,12 @@ class MaskCache:
         return mask
 
     def close(self):
+        for _name, handle in getattr(self, "bundles", []):
+            self.lib.neuronte_close(handle)
+        self.bundles = []
+        if getattr(self, "mark", None):
+            self.lib.neuronte_close(self.mark)
+            self.mark = None
         if self.ptr:
             self.lib.neuronte_close(self.ptr)
             self.ptr = None
