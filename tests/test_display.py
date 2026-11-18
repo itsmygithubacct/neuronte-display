@@ -117,6 +117,16 @@ class EmbedderTests(unittest.TestCase):
         terminal.scroll(1000)
         self.assertEqual(terminal.scrollbar()[1], 27)
 
+    def test_the_title_a_program_sets(self):
+        terminal = self.terminal()
+        self.assertEqual(terminal.title(), "")
+        terminal.feed(b"\x1b]2;Kilix pane 7: build\x07")
+        self.assertEqual(terminal.title(), "Kilix pane 7: build")
+        terminal.feed("\x1b]0;caf\u00e9 \u65e5\x1b\\".encode())
+        self.assertEqual(terminal.title(), "caf\u00e9 \u65e5")
+        terminal.feed(b"\x1b]2;\x07")
+        self.assertEqual(terminal.title(), "")
+
     def test_alternate_screen_keeps_no_scrollback(self):
         terminal = self.terminal()
         for i in range(10):

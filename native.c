@@ -204,6 +204,16 @@ int nd_alternate_screen(nd_terminal *n) {
     return screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE ? 1 : 0;
 }
 
+/* The title a program set (OSC 0 or 2), copied into out; its length in
+ * bytes (cut to cap), 0 with none set, -1 on error. */
+long nd_title(nd_terminal *n, char *out, size_t cap) {
+    GhosttyString title = {0};
+    if (!n || !out || ghostty_terminal_get(n->terminal, GHOSTTY_TERMINAL_DATA_TITLE, &title) != GHOSTTY_SUCCESS) return -1;
+    size_t len = title.len < cap ? title.len : cap;
+    if (len) memcpy(out, title.ptr, len);
+    return (long)len;
+}
+
 /* Move the rows shown: 0 to the oldest kept, 1 back to the live rows, 2 by
  * value rows (up is negative), 3 so row value of the scrollbar is the first
  * shown. */

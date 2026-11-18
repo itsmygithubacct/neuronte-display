@@ -44,6 +44,7 @@ def native():
         "nd_mode": ([C.c_void_p, C.c_int, C.c_int], C.c_int),
         "nd_mouse_tracking": ([C.c_void_p], C.c_int),
         "nd_alternate_screen": ([C.c_void_p], C.c_int),
+        "nd_title": ([C.c_void_p, C.c_void_p, C.c_size_t], C.c_long),
         "nd_scroll": ([C.c_void_p, C.c_int, C.c_int64], C.c_int),
         "nd_scrollbar": ([C.c_void_p, C.POINTER(C.c_uint64)], C.c_int),
         "nd_paste": ([C.c_void_p, C.c_void_p, C.c_size_t, C.c_void_p, C.c_size_t], C.c_long),
@@ -138,6 +139,12 @@ class Terminal:
 
     def alternate_screen(self):
         return self.lib.nd_alternate_screen(self.ptr) == 1
+
+    def title(self):
+        """The title the program set (OSC 0 or 2), '' when none."""
+        out = C.create_string_buffer(1024)
+        size = self.lib.nd_title(self.ptr, out, len(out))
+        return out.raw[:size].decode("utf-8", "replace") if size > 0 else ""
 
     def scroll(self, rows):
         """Show older rows (negative) or newer ones."""
