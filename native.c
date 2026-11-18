@@ -18,11 +18,13 @@ typedef struct {
     uint8_t replies[65536];
     size_t reply_len;
     int reply_error;
-    uint16_t cols, height;
+    uint16_t cols, height, cw, ch;
+    GhosttyMouseEncoder mouse;
 } nd_terminal;
 
 void nd_free(nd_terminal *n) {
     if (!n) return;
+    if (n->mouse) ghostty_mouse_encoder_free(n->mouse);
     if (n->cells) ghostty_render_state_row_cells_free(n->cells);
     if (n->rows) ghostty_render_state_row_iterator_free(n->rows);
     if (n->render) ghostty_render_state_free(n->render);
@@ -45,10 +47,11 @@ nd_terminal *nd_new(int cols, int rows) {
     if (ghostty_terminal_new(NULL, &n->terminal, cols, rows) != GHOSTTY_SUCCESS ||
         ghostty_render_state_new(NULL, &n->render) != GHOSTTY_SUCCESS ||
         ghostty_render_state_row_iterator_new(NULL, &n->rows) != GHOSTTY_SUCCESS ||
-        ghostty_render_state_row_cells_new(NULL, &n->cells) != GHOSTTY_SUCCESS) {
+        ghostty_render_state_row_cells_new(NULL, &n->cells) != GHOSTTY_SUCCESS ||
+        ghostty_mouse_encoder_new(NULL, &n->mouse) != GHOSTTY_SUCCESS) {
         nd_free(n); return NULL;
     }
-    n->cols = cols; n->height = rows;
+    n->cols = cols; n->height = rows; n->cw = 8; n->ch = 16;
     GhosttyColorRgb fg = {220, 226, 235}, bg = {19, 23, 30};
     size_t history = 8 * 1024 * 1024;
     if (ghostty_terminal_set(n->terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &fg) != GHOSTTY_SUCCESS ||
@@ -64,7 +67,7 @@ nd_terminal *nd_new(int cols, int rows) {
 int nd_resize(nd_terminal *n, int cols, int rows, int cw, int ch) {
     if (!n || cols < 1 || rows < 1 || cols > 1000 || rows > 1000 || cw < 1 || ch < 1) return -1;
     if (ghostty_terminal_resize(n->terminal, cols, rows, cw, ch) != GHOSTTY_SUCCESS) return -1;
-    n->cols = cols; n->height = rows; return 0;
+    n->cols = cols; n->height = rows; n->cw = cw; n->ch = ch; return 0;
 }
 
 int nd_feed(nd_terminal *n, const uint8_t *data, size_t len) {
@@ -146,4 +149,96 @@ int nd_present(kittyfb_session *s, const uint8_t *rgba, int width, int height) {
 
 void nd_presenter_close(kittyfb_session *s) {
     if (s) { kittyfb_stop(s); free(s); }
+}
+
+/* Pointer input for the program in the terminal, encoded as the modes it
+ * asked for (none: nothing). x and y are pixels from the grid's top left.
+ * Same call as RC9's display. */
+int nd_mouse(nd_terminal *n, int action, int button, int mods, int x, int y,
+             uint8_t *out, size_t cap) {
+    if (!n || !out || action < 0 || action > 2 || button < 0 || button > 11) return -1;
+    GhosttyMouseEvent event;
+    if (ghostty_mouse_event_new(NULL, &event) != GHOSTTY_SUCCESS) return -1;
+    ghostty_mouse_encoder_setopt_from_terminal(n->mouse, n->terminal);
+    GhosttyMouseEncoderSize size = {.size = sizeof(GhosttyMouseEncoderSize),
+        .screen_width = (uint32_t)n->cols * n->cw, .screen_height = (uint32_t)n->height * n->ch,
+        .cell_width = n->cw, .cell_height = n->ch};
+    bool pressed = button != 0 && action != 1;
+    ghostty_mouse_encoder_setopt(n->mouse, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
+    ghostty_mouse_encoder_setopt(n->mouse, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &pressed);
+    ghostty_mouse_event_set_action(event, action);
+    if (button) ghostty_mouse_event_set_button(event, button);
+    else ghostty_mouse_event_clear_button(event);
+    ghostty_mouse_event_set_mods(event, mods);
+    GhosttyTerminalModeConfig pixels = {.mode = GHOSTTY_MODE_SGR_PIXELS_MOUSE};
+    ghostty_terminal_get(n->terminal, GHOSTTY_TERMINAL_DATA_MODE, &pixels);
+    /* The encoder's SGR-pixel path takes the position as it is, unlike its
+       cell path: make the zero-based pixels one-based once. */
+    ghostty_mouse_event_set_position(event, (GhosttyMousePosition){x + (pixels.value ? 1 : 0), y + (pixels.value ? 1 : 0)});
+    size_t written = 0;
+    GhosttyResult result = ghostty_mouse_encoder_encode(n->mouse, event, (char *)out, cap, &written);
+    ghostty_mouse_event_free(event);
+    return result == GHOSTTY_SUCCESS ? (int)written : -1;
+}
+
+/* 1 if the mode is set, 0 if not, -1 for an unknown mode. ansi picks the
+ * ANSI modes (CSI n h) over the DEC private ones (CSI ? n h). */
+int nd_mode(nd_terminal *n, int number, int ansi) {
+    if (!n || number < 0 || number > 0x7fff) return -1;
+    GhosttyTerminalModeConfig mode = {.mode = ghostty_mode_new((uint16_t)number, ansi != 0)};
+    if (ghostty_terminal_get(n->terminal, GHOSTTY_TERMINAL_DATA_MODE, &mode) != GHOSTTY_SUCCESS) return -1;
+    return mode.value ? 1 : 0;
+}
+
+/* 1 while the program asks for pointer reports of any kind. */
+int nd_mouse_tracking(nd_terminal *n) {
+    bool tracking = false;
+    if (!n || ghostty_terminal_get(n->terminal, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &tracking) != GHOSTTY_SUCCESS) return -1;
+    return tracking ? 1 : 0;
+}
+
+/* 1 on the alternate screen, which keeps no scrollback. */
+int nd_alternate_screen(nd_terminal *n) {
+    GhosttyTerminalScreen screen;
+    if (!n || ghostty_terminal_get(n->terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen) != GHOSTTY_SUCCESS) return -1;
+    return screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE ? 1 : 0;
+}
+
+/* Move the rows shown: 0 to the oldest kept, 1 back to the live rows, 2 by
+ * value rows (up is negative), 3 so row value of the scrollbar is the first
+ * shown. */
+int nd_scroll(nd_terminal *n, int how, int64_t value) {
+    if (!n || how < 0 || how > 3 || (how == 3 && value < 0)) return -1;
+    GhosttyTerminalScrollViewport scroll = {0};
+    scroll.tag = how == 0 ? GHOSTTY_SCROLL_VIEWPORT_TOP : how == 1 ? GHOSTTY_SCROLL_VIEWPORT_BOTTOM :
+                 how == 2 ? GHOSTTY_SCROLL_VIEWPORT_DELTA : GHOSTTY_SCROLL_VIEWPORT_ROW;
+    if (how == 2) scroll.value.delta = (intptr_t)value;
+    if (how == 3) scroll.value.row = (size_t)value;
+    ghostty_terminal_scroll_viewport(n->terminal, scroll);
+    return 0;
+}
+
+/* Rows kept in all, the first one shown, and how many are shown. */
+int nd_scrollbar(nd_terminal *n, uint64_t *out) {
+    GhosttyTerminalScrollbar bar;
+    if (!n || !out || ghostty_terminal_get(n->terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &bar) != GHOSTTY_SUCCESS) return -1;
+    out[0] = bar.total; out[1] = bar.offset; out[2] = bar.len;
+    return 0;
+}
+
+/* Text pasted as the terminal's modes want it: bracketed when the program
+ * asked (2004), else with returns for newlines; control bytes become
+ * spaces. Returns the bytes written, or -(bytes needed) if cap is short. */
+long nd_paste(nd_terminal *n, const uint8_t *data, size_t len, uint8_t *out, size_t cap) {
+    if (!n || (!data && len) || (!out && cap) || len > (64u << 20)) return 0;
+    int bracketed = nd_mode(n, 2004, 0);
+    if (bracketed < 0) return 0;
+    char *copy = malloc(len ? len : 1);
+    if (!copy) return 0;
+    if (len) memcpy(copy, data, len);
+    size_t written = 0;
+    GhosttyResult result = ghostty_paste_encode(copy, len, bracketed == 1, (char *)out, cap, &written);
+    free(copy);
+    if (result == GHOSTTY_OUT_OF_SPACE) return -(long)written;
+    return result == GHOSTTY_SUCCESS ? (long)written : 0;
 }

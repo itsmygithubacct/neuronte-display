@@ -40,6 +40,13 @@ def native():
         "nd_feed": ([C.c_void_p, C.c_void_p, C.c_size_t], C.c_int),
         "nd_replies": ([C.c_void_p, C.c_void_p, C.c_size_t], C.c_int),
         "nd_snapshot": ([C.c_void_p, C.POINTER(NativeCell), C.c_size_t, C.POINTER(C.c_int)], C.c_int),
+        "nd_mouse": ([C.c_void_p] + [C.c_int] * 5 + [C.c_void_p, C.c_size_t], C.c_int),
+        "nd_mode": ([C.c_void_p, C.c_int, C.c_int], C.c_int),
+        "nd_mouse_tracking": ([C.c_void_p], C.c_int),
+        "nd_alternate_screen": ([C.c_void_p], C.c_int),
+        "nd_scroll": ([C.c_void_p, C.c_int, C.c_int64], C.c_int),
+        "nd_scrollbar": ([C.c_void_p, C.POINTER(C.c_uint64)], C.c_int),
+        "nd_paste": ([C.c_void_p, C.c_void_p, C.c_size_t, C.c_void_p, C.c_size_t], C.c_long),
         "nd_presenter_open": ([C.c_int, C.c_int], C.c_void_p),
         "nd_present": ([C.c_void_p, C.c_void_p, C.c_int, C.c_int], C.c_int),
         "nd_presenter_close": ([C.c_void_p], None),
@@ -87,6 +94,80 @@ class Terminal:
                 scalar = 32
             out.append((scalar, c.fg, c.bg, flags))
         return out, tuple(cursor)
+
+    def rows_text(self):
+        """Each row shown as a list of its cells' text, whole graphemes: one
+        entry a column, "" for the second half of a wide character."""
+        cells = (NativeCell * (self.cols * self.rows))()
+        cursor = (C.c_int * 2)()
+        if self.lib.nd_snapshot(self.ptr, cells, len(cells), cursor) != len(cells):
+            raise RuntimeError("Cannot capture complete terminal grid")
+        rows = []
+        for y in range(self.rows):
+            row = []
+            for c in cells[y * self.cols:(y + 1) * self.cols]:
+                if c.wide >= 2:
+                    row.append("")
+                    continue
+                row.append("".join(chr(c.points[i]) for i in range(c.length)) or " ")
+            rows.append(row)
+        return rows
+
+    # Pointer buttons and actions, as Ghostty numbers them.
+    PRESS, RELEASE, MOTION = 0, 1, 2
+    LEFT, RIGHT, MIDDLE, WHEEL_UP, WHEEL_DOWN = 1, 2, 3, 4, 5
+    SHIFT, CTRL, ALT = 1, 2, 4
+
+    def mouse(self, action, button, mods, x, y):
+        """Bytes reporting this pointer event to the program, b"" if it
+        asked for none. x and y are pixels from the grid's top left."""
+        out = C.create_string_buffer(64)
+        size = self.lib.nd_mouse(self.ptr, action, button, mods, x, y, out, len(out))
+        if size < 0:
+            raise ValueError("Invalid pointer event")
+        return out.raw[:size]
+
+    def mode(self, number, ansi=False):
+        value = self.lib.nd_mode(self.ptr, number, 1 if ansi else 0)
+        if value < 0:
+            raise ValueError("Unknown terminal mode")
+        return bool(value)
+
+    def mouse_tracking(self):
+        return self.lib.nd_mouse_tracking(self.ptr) == 1
+
+    def alternate_screen(self):
+        return self.lib.nd_alternate_screen(self.ptr) == 1
+
+    def scroll(self, rows):
+        """Show older rows (negative) or newer ones."""
+        self.lib.nd_scroll(self.ptr, 2, int(rows))
+
+    def scroll_to(self, row):
+        """Make row (as scrollbar() counts) the first shown."""
+        self.lib.nd_scroll(self.ptr, 3, max(0, int(row)))
+
+    def scroll_top(self):
+        self.lib.nd_scroll(self.ptr, 0, 0)
+
+    def scroll_bottom(self):
+        self.lib.nd_scroll(self.ptr, 1, 0)
+
+    def scrollbar(self):
+        """(rows kept, first row shown, rows shown)."""
+        out = (C.c_uint64 * 3)()
+        if self.lib.nd_scrollbar(self.ptr, out):
+            raise RuntimeError("Cannot read the scrollbar")
+        return tuple(out)
+
+    def paste(self, data):
+        """Bytes to write for pasting data, framed as the program asked."""
+        need = self.lib.nd_paste(self.ptr, data, len(data), None, 0)
+        if need >= 0:
+            return b""
+        out = C.create_string_buffer(-need)
+        size = self.lib.nd_paste(self.ptr, data, len(data), out, len(out))
+        return out.raw[:size] if size > 0 else b""
 
     def close(self):
         if self.ptr:
@@ -242,17 +323,21 @@ class Renderer:
 
 
 class Pane:
-    def __init__(self, command, cols, rows, cw, ch, lib):
+    """A command on a PTY of its own, parsed into a Terminal. `env` is the
+    command's whole environment (os.environ when None), with TERM and
+    COLORTERM set for it either way."""
+    def __init__(self, command, cols, rows, cw, ch, lib, env=None):
         self.terminal = Terminal(cols, rows, lib)
         self.cw, self.ch, self.cols, self.rows = cw, ch, cols, rows
         self.name = Path(command[0]).name
         self.pending = bytearray()
         self.exit_status = None
+        base = dict(os.environ if env is None else env)
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             try:
                 fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, cols * cw, rows * ch))
-                env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor")
+                env = dict(base, TERM="xterm-256color", COLORTERM="truecolor")
                 for key in ("LINES", "COLUMNS"):
                     env.pop(key, None)
                 os.execvpe(command[0], command, env)

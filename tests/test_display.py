@@ -1,5 +1,6 @@
 import ctypes as C
 import os
+import select
 from pathlib import Path
 import sys
 import tempfile
@@ -56,6 +57,139 @@ class ParserTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             terminal.resize(0, 7)
         self.assertEqual(len(terminal.snapshot()[0]), 210)
+
+
+class EmbedderTests(unittest.TestCase):
+    """Scrollback, pointer reports, modes and paste, for an embedder that
+    draws the grid itself (Zell's pane rooms)."""
+
+    def test_a_pane_runs_in_the_environment_it_is_given(self):
+        lib = d.native()
+        env = {"PATH": "/usr/bin:/bin", "ZELL_GIVEN": "given", "LINES": "3"}
+        pane = d.Pane(["/bin/sh", "-c", 'printf "%s|%s|%s|%s" "$ZELL_GIVEN" "$TERM" "${LINES-unset}" "${HOME-unset}"'],
+                            40, 8, 8, 16, lib, env=env)
+        try:
+            deadline = time.monotonic() + 10
+            while pane.fd is not None and time.monotonic() < deadline:
+                select.select([pane.fd], [], [], 0.1)
+                pane.read()
+            text = "".join("".join(row) for row in pane.terminal.rows_text())
+            self.assertIn("given|xterm-256color|unset|unset", text)
+            # The caller's dict is not changed.
+            self.assertEqual(env, {"PATH": "/usr/bin:/bin", "ZELL_GIVEN": "given", "LINES": "3"})
+        finally:
+            pane.close()
+
+    def terminal(self, cols=20, rows=5):
+        terminal = d.Terminal(cols, rows)
+        self.addCleanup(terminal.close)
+        return terminal
+
+    def first_row(self, terminal):
+        return "".join(terminal.rows_text()[0]).rstrip()
+
+    def test_scrollback_moves_what_is_shown(self):
+        terminal = self.terminal()
+        for i in range(30):
+            terminal.feed(f"line {i}\r\n".encode())
+        self.assertEqual(terminal.scrollbar(), (31, 26, 5))
+        self.assertEqual(self.first_row(terminal), "line 26")
+        terminal.scroll(-10)
+        self.assertEqual(terminal.scrollbar(), (31, 16, 5))
+        self.assertEqual(self.first_row(terminal), "line 16")
+        self.assertEqual(chr(terminal.snapshot()[0][0][0]), "l")
+        # Scrolled back, the cursor is not shown.
+        self.assertEqual(terminal.snapshot()[1], (-1, -1))
+        terminal.scroll(3)
+        self.assertEqual(self.first_row(terminal), "line 19")
+        terminal.scroll_to(4)
+        self.assertEqual((terminal.scrollbar()[1], self.first_row(terminal)), (4, "line 4"))
+        terminal.scroll_top()
+        self.assertEqual(self.first_row(terminal), "line 0")
+        # Output while scrolled back leaves the rows shown where they are.
+        terminal.feed(b"more\r\n")
+        self.assertEqual(self.first_row(terminal), "line 0")
+        terminal.scroll_bottom()
+        self.assertEqual(terminal.scrollbar(), (32, 27, 5))
+        self.assertEqual(terminal.snapshot()[1], (0, 4))
+        terminal.scroll(-1000)
+        self.assertEqual(terminal.scrollbar()[1], 0)
+        terminal.scroll(1000)
+        self.assertEqual(terminal.scrollbar()[1], 27)
+
+    def test_alternate_screen_keeps_no_scrollback(self):
+        terminal = self.terminal()
+        for i in range(10):
+            terminal.feed(f"{i}\r\n".encode())
+        self.assertFalse(terminal.alternate_screen())
+        terminal.feed(b"\x1b[?1049h")
+        self.assertTrue(terminal.alternate_screen())
+        self.assertEqual(terminal.scrollbar(), (5, 0, 5))
+        terminal.scroll(-3)
+        self.assertEqual(terminal.scrollbar(), (5, 0, 5))
+        terminal.feed(b"\x1b[?1049l")
+        self.assertFalse(terminal.alternate_screen())
+        self.assertEqual(terminal.scrollbar()[0], 11)
+
+    def test_modes(self):
+        terminal = self.terminal()
+        self.assertFalse(terminal.mode(2004))
+        terminal.feed(b"\x1b[?2004h\x1b[4h")
+        self.assertTrue(terminal.mode(2004))
+        self.assertTrue(terminal.mode(4, ansi=True))
+        self.assertFalse(terminal.mode(4))
+        with self.assertRaises(ValueError):
+            terminal.mode(31999)
+
+    def test_pointer_reports_follow_the_programs_modes(self):
+        terminal = self.terminal(20, 5)
+        T = d.Terminal
+        self.assertFalse(terminal.mouse_tracking())
+        self.assertEqual(terminal.mouse(T.PRESS, T.LEFT, 0, 10, 20), b"")
+        terminal.feed(b"\x1b[?1000h\x1b[?1006h")
+        self.assertTrue(terminal.mouse_tracking())
+        # Pixel (10, 20) is cell (2, 2) counted from one: 8x16 cells.
+        self.assertEqual(terminal.mouse(T.PRESS, T.LEFT, 0, 10, 20), b"\x1b[<0;2;2M")
+        self.assertEqual(terminal.mouse(T.RELEASE, T.LEFT, 0, 10, 20), b"\x1b[<0;2;2m")
+        self.assertEqual(terminal.mouse(T.PRESS, T.RIGHT, 0, 79, 79), b"\x1b[<2;10;5M")
+        self.assertEqual(terminal.mouse(T.PRESS, T.WHEEL_UP, 0, 0, 0), b"\x1b[<64;1;1M")
+        self.assertEqual(terminal.mouse(T.PRESS, T.WHEEL_DOWN, T.CTRL, 0, 0), b"\x1b[<81;1;1M")
+        # Normal tracking reports no motion; button tracking reports drags.
+        self.assertEqual(terminal.mouse(T.MOTION, T.LEFT, 0, 30, 20), b"")
+        terminal.feed(b"\x1b[?1002h")
+        self.assertEqual(terminal.mouse(T.MOTION, T.LEFT, 0, 30, 20), b"\x1b[<32;4;2M")
+        # A resize changes the cell size the pixels are counted in.
+        terminal.resize(20, 5, 10, 20)
+        self.assertEqual(terminal.mouse(T.PRESS, T.LEFT, 0, 10, 20), b"\x1b[<0;2;2M")
+        self.assertEqual(terminal.mouse(T.PRESS, T.LEFT, 0, 9, 19), b"\x1b[<0;1;1M")
+        terminal.feed(b"\x1b[?1016h")
+        self.assertEqual(terminal.mouse(T.PRESS, T.LEFT, 0, 9, 19), b"\x1b[<0;10;20M")
+        terminal.feed(b"\x1b[?1000l\x1b[?1002l")
+        self.assertEqual(terminal.mouse(T.PRESS, T.LEFT, 0, 10, 20), b"")
+        with self.assertRaises(ValueError):
+            terminal.mouse(7, T.LEFT, 0, 0, 0)
+
+    def test_paste_is_framed_as_asked(self):
+        terminal = self.terminal()
+        self.assertEqual(terminal.paste(b""), b"")
+        self.assertEqual(terminal.paste(b"echo hi\nls\n"), b"echo hi\rls\r")
+        # Control bytes cannot end the paste or type keys.
+        self.assertEqual(terminal.paste(b"a\x1b[201~b\x03"), b"a [201~b ")
+        terminal.feed(b"\x1b[?2004h")
+        self.assertEqual(terminal.paste(b"echo hi\nls"), b"\x1b[200~echo hi\nls\x1b[201~")
+        self.assertEqual(terminal.paste(b"x\x1b[201~y"), b"\x1b[200~x [201~y\x1b[201~")
+        big = b"0123456789" * 100000
+        self.assertEqual(terminal.paste(big), b"\x1b[200~" + big + b"\x1b[201~")
+        self.assertEqual(terminal.paste(b""), b"\x1b[200~\x1b[201~")
+
+    def test_rows_text_keeps_whole_graphemes(self):
+        terminal = self.terminal(8, 2)
+        terminal.feed("e\u0301界Z".encode())
+        row = terminal.rows_text()[0]
+        self.assertEqual(row[:4], ["e\u0301", "界", "", "Z"])
+        self.assertEqual(len(row), 8)
+        self.assertEqual("".join(row).rstrip(), "e\u0301界Z")
+        self.assertEqual(terminal.rows_text()[1], [" "] * 8)
 
 
 class CacheTests(unittest.TestCase):

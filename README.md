@@ -52,6 +52,27 @@ resize both parser state and the PTY, delivering SIGWINCH through the kernel.
 The outer display uses the chosen `--cols`/`--rows` geometry; stage 1 does not
 automatically change its grid when the hosting terminal window changes size.
 
+## For embedders
+
+A program that draws the grid itself (Zell's pane rooms do) has, on `Terminal`:
+
+- `scroll(rows)`, `scroll_to(row)`, `scroll_top()`, `scroll_bottom()` and `scrollbar()`, which gives
+  (rows kept, first row shown, rows shown). The parser keeps 8 MiB of scrollback; the alternate
+  screen keeps none. While older rows are shown the cursor is not, and new output leaves them in place.
+- `mouse(action, button, mods, x, y)`: the bytes reporting a pointer event in the modes the program
+  asked for, or nothing. x and y are pixels from the grid's top left. `mouse_tracking()` says whether
+  it asked for any. The constants `PRESS`, `LEFT`, `WHEEL_UP`, `SHIFT` and the rest are on `Terminal`.
+- `paste(data)`: the bytes to write for a paste, bracketed when the program set mode 2004, with
+  returns for newlines otherwise; control bytes become spaces.
+- `mode(number, ansi=False)`, `alternate_screen()` and `rows_text()` (each row's cells as whole
+  graphemes, one entry a column and "" for a wide character's second half, for copying).
+
+`Pane(command, cols, rows, cw, ch, lib, env=None)` runs its command in `env` (this process's
+environment when None), with `TERM` and `COLORTERM` set for the display.
+
+The native calls under them are `nd_mouse` (as in RC9's display), `nd_mode`, `nd_mouse_tracking`,
+`nd_alternate_screen`, `nd_scroll`, `nd_scrollbar` and `nd_paste`.
+
 ## Rendering and persistence
 
 Every scalar mask comes from `neuronte_coverage`, with two samples per axis.
