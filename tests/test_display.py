@@ -80,6 +80,31 @@ class EmbedderTests(unittest.TestCase):
         finally:
             pane.close()
 
+    def pane_report(self, cols, rows, resize=None):
+        # What the program sees: its size, and whether the pane is its
+        # controlling terminal with it in the foreground.
+        report = ("import os, time; time.sleep(0.3); size = os.get_terminal_size(0); "
+                  "print('size', size.columns, size.lines, os.tcgetpgrp(0) == os.getpgrp(), sep='|')")
+        pane = d.Pane([sys.executable, "-c", report], cols, rows, 8, 16, d.native(), env={"PATH": "/usr/bin:/bin"})
+        try:
+            if resize:
+                pane.resize(*resize)
+            deadline = time.monotonic() + 10
+            while pane.fd is not None and time.monotonic() < deadline:
+                select.select([pane.fd], [], [], 0.1)
+                pane.read()
+            return "".join("".join(row) for row in pane.terminal.rows_text())
+        finally:
+            pane.close()
+
+    def test_a_pane_resized_at_once_keeps_the_new_size(self):
+        # A split makes its pane at 8x3 and its layout resizes it straight
+        # away; the program must see the layout's size, not the first one.
+        for _ in range(3):
+            self.assertIn("size|70|9|True", self.pane_report(8, 3, resize=(70, 9)))
+        # Not resized, a pane keeps the size it was made with.
+        self.assertIn("size|33|7|True", self.pane_report(33, 7))
+
     def terminal(self, cols=20, rows=5):
         terminal = d.Terminal(cols, rows)
         self.addCleanup(terminal.close)

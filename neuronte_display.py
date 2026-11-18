@@ -9,7 +9,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import pty
 import select
 import signal
 import struct
@@ -340,16 +339,29 @@ class Pane:
         self.pending = bytearray()
         self.exit_status = None
         base = dict(os.environ if env is None else env)
-        self.pid, self.fd = pty.fork()
+        env = dict(base, TERM="xterm-256color", COLORTERM="truecolor")
+        for key in ("LINES", "COLUMNS"):
+            env.pop(key, None)
+        # The size goes on the PTY before the fork. Set in the child, it
+        # could land after a resize() the parent made at once, as a split's
+        # layout does, and the program would keep the first size for good.
+        master, slave = os.openpty()
+        try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, cols * cw, rows * ch))
+            self.pid = os.fork()
+        except BaseException:
+            os.close(master)
+            os.close(slave)
+            raise
         if self.pid == 0:
             try:
-                fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, cols * cw, rows * ch))
-                env = dict(base, TERM="xterm-256color", COLORTERM="truecolor")
-                for key in ("LINES", "COLUMNS"):
-                    env.pop(key, None)
+                os.close(master)
+                os.login_tty(slave)
                 os.execvpe(command[0], command, env)
-            except Exception:
+            except BaseException:
                 os._exit(127)
+        os.close(slave)
+        self.fd = master
         os.set_blocking(self.fd, False)
 
     def resize(self, cols, rows):
